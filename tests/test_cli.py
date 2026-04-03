@@ -15,7 +15,8 @@ def runner():
 def mock_client():
     with patch("voygr.cli.create_client") as mock_create:
         client = MagicMock()
-        mock_create.return_value = client
+        mock_create.return_value.__enter__ = MagicMock(return_value=client)
+        mock_create.return_value.__exit__ = MagicMock(return_value=False)
         yield client
 
 
@@ -135,8 +136,10 @@ class TestGlobalFlags:
 
     def test_base_url_flag(self, runner):
         with patch("voygr.cli.create_client") as mock_create:
-            mock_create.return_value = MagicMock()
-            mock_create.return_value.usage.return_value = {"remaining": 88}
+            client = MagicMock()
+            client.usage.return_value = {"remaining": 88}
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             runner.invoke(cli, ["--base-url", "https://staging.voygr.tech", "usage"])
             mock_create.assert_called_once()
             call_kwargs = mock_create.call_args
@@ -146,15 +149,19 @@ class TestGlobalFlags:
 class TestAuthResolution:
     def test_flag_overrides_env(self, runner):
         with patch("voygr.cli.create_client") as mock_create:
-            mock_create.return_value = MagicMock()
-            mock_create.return_value.usage.return_value = {"remaining": 88}
+            client = MagicMock()
+            client.usage.return_value = {"remaining": 88}
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["--api-key", "pk_live_flag", "usage"], env={"VOYGR_API_KEY": "pk_live_env"})
             assert result.exit_code == 0
 
     def test_env_overrides_config(self, runner):
         with patch("voygr.cli.create_client") as mock_create, \
              patch("voygr.cli.load_config", return_value={"api_key": "pk_live_config"}):
-            mock_create.return_value = MagicMock()
-            mock_create.return_value.usage.return_value = {"remaining": 88}
+            client = MagicMock()
+            client.usage.return_value = {"remaining": 88}
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["usage"], env={"VOYGR_API_KEY": "pk_live_env"})
             assert result.exit_code == 0

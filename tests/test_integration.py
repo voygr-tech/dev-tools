@@ -16,7 +16,8 @@ class TestSignupToCheckFlow:
         with patch("voygr.cli.create_client") as mock_create:
             client = MagicMock()
             client.signup.return_value = {"success": True, "message": "API key sent to your email"}
-            mock_create.return_value = client
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["signup", "test@example.com", "--name", "Test User"])
             assert result.exit_code == 0
             assert json.loads(result.output)["success"] is True
@@ -38,7 +39,8 @@ class TestSignupToCheckFlow:
                 "request_id": "req_abc",
                 "validation_timestamp": "2026-04-03T12:00:00Z",
             }
-            mock_create.return_value = client
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["check", "Joe's Pizza", "123 Main St"])
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -56,7 +58,8 @@ class TestSignupToCheckFlow:
                 "period": "lifetime",
                 "status": "active",
             }
-            mock_create.return_value = client
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["usage"])
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -78,7 +81,8 @@ class TestLogoutFlow:
             from voygr.client import APIError
             client = MagicMock()
             client.check.side_effect = APIError("No API key configured", error_code="client_error")
-            mock_create.return_value = client
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["check", "Test", "Test"])
             assert result.exit_code == 1
 
@@ -93,7 +97,8 @@ class TestErrorJsonFormat:
             from voygr.client import APIError
             client = MagicMock()
             client.check.side_effect = APIError("QUOTA_EXCEEDED: No validations remaining", status_code=402, error_code="QUOTA_EXCEEDED")
-            mock_create.return_value = client
+            mock_create.return_value.__enter__ = MagicMock(return_value=client)
+            mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["check", "Test", "Test"])
             error = json.loads(result.output)
             assert "error" in error

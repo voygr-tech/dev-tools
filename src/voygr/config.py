@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 
@@ -23,8 +24,9 @@ def save_api_key(api_key: str, config_dir: Path | None = None) -> None:
     config_file = config_dir / "config.json"
     config = load_config(config_dir=config_dir)
     config["api_key"] = api_key
-    config_file.write_text(json.dumps(config, indent=2) + "\n")
-    config_file.chmod(0o600)
+    fd = os.open(str(config_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(json.dumps(config, indent=2) + "\n")
 
 
 def delete_config(config_dir: Path | None = None) -> None:

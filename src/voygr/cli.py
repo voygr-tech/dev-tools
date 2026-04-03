@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 
 import click
 
@@ -59,13 +58,13 @@ def signup(ctx, email, name):
     """Request an API key via email."""
     name = name or email
     base_url = resolve_base_url(ctx.obj["base_url"])
-    client = create_client(base_url=base_url)
-    try:
-        result = client.signup(email=email, name=name)
-        output(result, ctx.obj["pretty"])
-    except APIError as e:
-        error_output(e)
-        sys.exit(1)
+    with create_client(base_url=base_url) as client:
+        try:
+            result = client.signup(email=email, name=name)
+            output(result, ctx.obj["pretty"])
+        except APIError as e:
+            error_output(e)
+            ctx.exit(1)
 
 
 @cli.command()
@@ -93,13 +92,13 @@ def check(ctx, name, address):
     """Check if a business exists and whether it's open."""
     api_key = resolve_api_key(ctx.obj["api_key"])
     base_url = resolve_base_url(ctx.obj["base_url"])
-    client = create_client(api_key=api_key, base_url=base_url)
-    try:
-        result = client.check(name=name, address=address)
-        output(result, ctx.obj["pretty"])
-    except APIError as e:
-        error_output(e)
-        sys.exit(1)
+    with create_client(api_key=api_key, base_url=base_url) as client:
+        try:
+            result = client.check(name=name, address=address)
+            output(result, ctx.obj["pretty"])
+        except APIError as e:
+            error_output(e)
+            ctx.exit(1)
 
 
 @cli.command()
@@ -108,10 +107,10 @@ def usage(ctx):
     """Check your remaining validation quota."""
     api_key = resolve_api_key(ctx.obj["api_key"])
     base_url = resolve_base_url(ctx.obj["base_url"])
-    client = create_client(api_key=api_key, base_url=base_url)
-    try:
-        result = client.usage()
-        output(result, ctx.obj["pretty"])
-    except APIError as e:
-        error_output(e)
-        sys.exit(1)
+    with create_client(api_key=api_key, base_url=base_url) as client:
+        try:
+            result = client.usage()
+            output(result, ctx.obj["pretty"])
+        except APIError as e:
+            error_output(e)
+            ctx.exit(1)

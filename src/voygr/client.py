@@ -40,7 +40,7 @@ class Client:
 
         try:
             data = response.json()
-        except (ValueError, KeyError):
+        except ValueError:
             if response.status_code >= 400:
                 raise APIError(f"HTTP {response.status_code}", status_code=response.status_code)
             raise APIError(f"Invalid JSON response from server")
