@@ -31,7 +31,7 @@ def output(data: dict, pretty: bool = False) -> None:
 
 def error_output(error: APIError) -> None:
     data = {"error": error.error_code or "client_error", "message": str(error)}
-    click.echo(json.dumps(data))
+    click.echo(json.dumps(data), err=True)
 
 
 @click.group()
@@ -65,17 +65,19 @@ def signup(ctx, email, name):
 
 @cli.command()
 @click.argument("api_key")
-def login(api_key):
+@click.pass_context
+def login(ctx, api_key):
     """Store your API key locally."""
     save_api_key(api_key)
-    output({"success": True, "message": "API key saved"})
+    output({"success": True, "message": "API key saved"}, ctx.obj["pretty"])
 
 
 @cli.command()
-def logout():
+@click.pass_context
+def logout(ctx):
     """Remove stored API key."""
     delete_config()
-    output({"success": True, "message": "API key removed"})
+    output({"success": True, "message": "API key removed"}, ctx.obj["pretty"])
 
 
 @cli.command()
