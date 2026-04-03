@@ -109,3 +109,15 @@ Extensive test coverage across all layers:
 - **Integration** — end-to-end flows (signup -> login -> check -> usage)
 
 API mocking via `httpx` mock transport — no real network calls in tests.
+
+## Documentation
+
+README serves as the complete reference. Must be self-contained enough for an AI agent or developer to use the tool without external docs.
+
+Contents:
+- Install instructions (`pip install voygr`)
+- Quick start walkthrough (signup -> login -> check)
+- Full command reference with examples for every command and flag combination
+- Environment variable reference (`VOYGR_API_KEY`, `VOYGR_BASE_URL`)
+- Exit codes and error format
+- Python library usage (`from voygr import Client`)
