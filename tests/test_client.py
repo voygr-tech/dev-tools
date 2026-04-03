@@ -147,7 +147,7 @@ class TestErrorHandling:
             raise httpx.ConnectError("Connection refused")
 
         client = Client(api_key="pk_live_test", transport=mock_transport(handler))
-        with pytest.raises(APIError, match="Connection refused"):
+        with pytest.raises(APIError, match="Request failed"):
             client.check(name="Test", address="Test")
 
     def test_timeout_raises_api_error(self):
@@ -157,6 +157,24 @@ class TestErrorHandling:
         client = Client(api_key="pk_live_test", transport=mock_transport(handler))
         with pytest.raises(APIError, match="timed out"):
             client.check(name="Test", address="Test")
+
+
+    def test_non_json_error_response(self):
+        def handler(request):
+            return httpx.Response(502, text="<html>Bad Gateway</html>")
+
+        client = Client(api_key="pk_live_test", transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.check(name="Test", address="Test")
+        assert exc_info.value.status_code == 502
+
+    def test_context_manager(self):
+        def handler(request):
+            return json_response({"quota_limit": 100, "current_usage": 0, "remaining": 100, "percentage_used": 0.0, "period": "lifetime", "status": "active"})
+
+        with Client(api_key="pk_live_test", transport=mock_transport(handler)) as client:
+            result = client.usage()
+            assert result["remaining"] == 100
 
 
 class TestBaseUrl:

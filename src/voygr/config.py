@@ -24,6 +24,7 @@ def save_api_key(api_key: str, config_dir: Path | None = None) -> None:
     config = load_config(config_dir=config_dir)
     config["api_key"] = api_key
     config_file.write_text(json.dumps(config, indent=2) + "\n")
+    config_file.chmod(0o600)
 
 
 def delete_config(config_dir: Path | None = None) -> None:

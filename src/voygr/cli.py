@@ -8,6 +8,10 @@ from voygr.client import Client, APIError
 from voygr.config import load_config, save_api_key, delete_config
 
 
+def resolve_base_url(ctx_base_url: str | None) -> str:
+    return ctx_base_url or os.environ.get("VOYGR_BASE_URL", "https://dev.voygr.tech")
+
+
 def create_client(api_key: str | None = None, base_url: str = "https://dev.voygr.tech") -> Client:
     return Client(api_key=api_key, base_url=base_url)
 
@@ -35,8 +39,8 @@ def error_output(error: APIError) -> None:
 
 
 @click.group()
-@click.option("--api-key", default=None, envvar="VOYGR_API_KEY", help="API key (overrides config and env).")
-@click.option("--base-url", default="https://dev.voygr.tech", envvar="VOYGR_BASE_URL", help="API base URL.")
+@click.option("--api-key", default=None, help="API key (overrides env and config).")
+@click.option("--base-url", default=None, help="API base URL.")
 @click.option("--pretty", is_flag=True, default=False, help="Pretty-print JSON output.")
 @click.pass_context
 def cli(ctx, api_key, base_url, pretty):
@@ -54,7 +58,8 @@ def cli(ctx, api_key, base_url, pretty):
 def signup(ctx, email, name):
     """Request an API key via email."""
     name = name or email
-    client = create_client(base_url=ctx.obj["base_url"])
+    base_url = resolve_base_url(ctx.obj["base_url"])
+    client = create_client(base_url=base_url)
     try:
         result = client.signup(email=email, name=name)
         output(result, ctx.obj["pretty"])
@@ -87,7 +92,8 @@ def logout(ctx):
 def check(ctx, name, address):
     """Check if a business exists and whether it's open."""
     api_key = resolve_api_key(ctx.obj["api_key"])
-    client = create_client(api_key=api_key, base_url=ctx.obj["base_url"])
+    base_url = resolve_base_url(ctx.obj["base_url"])
+    client = create_client(api_key=api_key, base_url=base_url)
     try:
         result = client.check(name=name, address=address)
         output(result, ctx.obj["pretty"])
@@ -101,7 +107,8 @@ def check(ctx, name, address):
 def usage(ctx):
     """Check your remaining validation quota."""
     api_key = resolve_api_key(ctx.obj["api_key"])
-    client = create_client(api_key=api_key, base_url=ctx.obj["base_url"])
+    base_url = resolve_base_url(ctx.obj["base_url"])
+    client = create_client(api_key=api_key, base_url=base_url)
     try:
         result = client.usage()
         output(result, ctx.obj["pretty"])

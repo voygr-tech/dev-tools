@@ -11,6 +11,13 @@ class TestSaveApiKey:
         data = json.loads(config_file.read_text())
         assert data["api_key"] == "pk_live_abc123"
 
+    def test_config_file_permissions(self, config_dir):
+        save_api_key("pk_live_abc123", config_dir=config_dir)
+        config_file = config_dir / "config.json"
+        import stat
+        mode = config_file.stat().st_mode & 0o777
+        assert mode == 0o600
+
     def test_overwrites_existing_key(self, config_dir):
         save_api_key("pk_live_old", config_dir=config_dir)
         save_api_key("pk_live_new", config_dir=config_dir)

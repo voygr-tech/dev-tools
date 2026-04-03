@@ -36,15 +36,30 @@ class Client:
         except httpx.TimeoutException:
             raise APIError("Request timed out")
         except httpx.HTTPError as e:
-            raise APIError(f"Connection refused: {e}")
+            raise APIError(f"Request failed: {e}")
 
-        data = response.json()
+        try:
+            data = response.json()
+        except (ValueError, KeyError):
+            if response.status_code >= 400:
+                raise APIError(f"HTTP {response.status_code}", status_code=response.status_code)
+            raise APIError(f"Invalid JSON response from server")
+
         if response.status_code >= 400:
             error_code = data.get("error_code", "UNKNOWN_ERROR")
             error_msg = data.get("error", response.reason_phrase)
             raise APIError(f"{error_code}: {error_msg}", status_code=response.status_code, error_code=error_code)
 
         return data
+
+    def close(self) -> None:
+        self._http.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def signup(self, email: str, name: str) -> dict:
         return self._request("POST", "/signup", auth=False, json={"email": email, "name": name})
