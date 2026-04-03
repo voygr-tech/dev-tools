@@ -1,31 +1,42 @@
-# Business Validation API
+# Voygr
 
-Verify whether a business exists at a given address and check if it's currently open or closed.
+CLI and Python client for the Business Validation API.
 
-**Base URL:** `https://dev.voygr.tech`
-
-## Getting Started
-
-### 1. Get an API Key
+## Install
 
 ```bash
-curl -X POST https://dev.voygr.tech/signup \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Your Name", "email": "you@example.com"}'
+pip install voygr
 ```
 
-Your API key will be sent to your email. No credit card required — you get **100 free validations**.
+Requires Python 3.10+.
 
-### 2. Validate a Business
+## Quick Start
+
+### 1. Sign up for an API key
 
 ```bash
-curl -X POST https://dev.voygr.tech/v1/business-status \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
-  -d '{"name": "Starbucks", "address": "1390 Market St, San Francisco, CA 94102"}'
+voygr signup you@example.com --name "Your Name"
 ```
 
-**Response:**
+```json
+{"success": true, "message": "API key sent to your email"}
+```
+
+### 2. Save your API key
+
+```bash
+voygr login pk_live_abc123
+```
+
+```json
+{"success": true, "message": "API key saved"}
+```
+
+### 3. Check a business
+
+```bash
+voygr check "Starbucks" "1390 Market St, San Francisco, CA 94102"
+```
 
 ```json
 {
@@ -37,88 +48,81 @@ curl -X POST https://dev.voygr.tech/v1/business-status \
 }
 ```
 
-## Authentication
+## Command Reference
 
-Include your API key in every request as the `X-API-Key` header:
+### `voygr signup <email> [--name NAME]`
 
+Request an API key. The key is sent to the provided email address.
+
+- `email` (required) -- email address to receive the key
+- `--name` -- your name; defaults to the email if omitted
+
+```bash
+voygr signup jane@example.com --name "Jane Smith"
 ```
-X-API-Key: pk_live_your_key_here
-```
-
-## Endpoints
-
-### POST /signup
-
-Get an API key sent to your email.
-
-**Request:**
 
 ```json
-{
-  "name": "Jane Smith",
-  "email": "jane@example.com"
-}
+{"success": true, "message": "API key sent to your email"}
 ```
 
-**Response:**
+No authentication required. Submitting the same email again re-sends your existing key.
+
+### `voygr login <api-key>`
+
+Store your API key locally at `~/.config/voygr/config.json`.
+
+```bash
+voygr login pk_live_abc123
+```
+
+```json
+{"success": true, "message": "API key saved"}
+```
+
+### `voygr logout`
+
+Remove the stored API key.
+
+```bash
+voygr logout
+```
+
+```json
+{"success": true, "message": "API key removed"}
+```
+
+### `voygr check <name> <address>`
+
+Check whether a business exists at the given address and whether it's open or closed. Requires authentication.
+
+- `name` (required) -- business name
+- `address` (required) -- full street address
+
+```bash
+voygr check "Blue Bottle Coffee" "66 Mint St, San Francisco, CA 94103"
+```
 
 ```json
 {
   "success": true,
-  "message": "API key sent to your email"
+  "existence_status": "exists",
+  "open_closed_status": "open",
+  "request_id": "req_7f2a",
+  "validation_timestamp": "2026-04-03T15:30:00Z"
 }
 ```
 
-If you've already signed up, submitting the same email will re-send your existing key.
+**`existence_status`** values: `exists`, `not_exists`, `uncertain`
 
----
+**`open_closed_status`** values: `open`, `closed`, `uncertain`
 
-### POST /v1/business-status
+### `voygr usage`
 
-Validate a business — check if it exists and whether it's open or closed.
+Check your remaining validation quota. Requires authentication.
 
-**Request:**
-
-| Field     | Type   | Required | Description              |
-|-----------|--------|----------|--------------------------|
-| `name`    | string | yes      | Business name            |
-| `address` | string | yes      | Full address string      |
-
-```json
-{
-  "name": "Blue Bottle Coffee",
-  "address": "66 Mint St, San Francisco, CA 94103"
-}
+```bash
+voygr usage
 ```
-
-**Response:**
-
-| Field               | Type   | Values                                  |
-|---------------------|--------|-----------------------------------------|
-| `success`           | bool   | `true` if validation completed          |
-| `existence_status`  | string | `exists`, `not_exists`, `uncertain`     |
-| `open_closed_status`| string | `open`, `closed`, `uncertain`           |
-| `request_id`        | string | Unique ID for this request              |
-| `validation_timestamp` | string | ISO 8601 UTC timestamp              |
-
-**Status values:**
-
-- **`exists`** — the business was found at the given address
-- **`not_exists`** — no evidence the business is at that address
-- **`uncertain`** — not enough information to determine
-- **`open`** — the business appears to be currently operating
-- **`closed`** — the business appears to be permanently closed
-- **`uncertain`** — not enough information to determine open/closed status
-
----
-
-### GET /v1/usage
-
-Check your remaining quota.
-
-**Headers:** `X-API-Key: YOUR_API_KEY`
-
-**Response:**
 
 ```json
 {
@@ -131,20 +135,183 @@ Check your remaining quota.
 }
 ```
 
-## Buying More Validations
+## Global Flags
 
-Visit [dev.voygr.tech/checkout](https://dev.voygr.tech/checkout) to purchase additional validations with your existing API key.
+These flags apply to every command:
 
-## Rate Limits
+| Flag | Description |
+|------|-------------|
+| `--api-key KEY` | API key for this request. Overrides env var and config file. |
+| `--base-url URL` | API base URL. Defaults to `https://dev.voygr.tech`. |
+| `--pretty` | Pretty-print JSON output with indentation. |
 
-- **Free tier:** 10 requests per minute
-- **Paid tier:** 60 requests per minute
+```bash
+voygr --api-key pk_live_abc123 --pretty check "Whole Foods" "399 4th St, SF, CA"
+```
 
-If you exceed the rate limit, you'll receive a `429` response. Wait and retry.
+## Environment Variables
 
-## Errors
+| Variable | Description |
+|----------|-------------|
+| `VOYGR_API_KEY` | API key. Used when no `--api-key` flag is passed. |
+| `VOYGR_BASE_URL` | Base URL. Used when no `--base-url` flag is passed. |
 
-All errors follow a consistent format:
+```bash
+export VOYGR_API_KEY=pk_live_abc123
+voygr check "Whole Foods" "399 4th St, San Francisco, CA 94107"
+```
+
+## Authentication
+
+The API key is resolved in this order:
+
+1. `--api-key` flag
+2. `VOYGR_API_KEY` environment variable
+3. Config file at `~/.config/voygr/config.json`
+
+If none of these are set, commands that require authentication (`check`, `usage`) will exit with an error.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | API error (bad request, auth failure, quota exceeded, network error) |
+| `2` | User error (missing argument, invalid flag) |
+
+## Error Format
+
+All errors are written to stderr as JSON:
+
+```json
+{"error": "AUTHENTICATION_ERROR", "message": "AUTHENTICATION_ERROR: Invalid or revoked API key"}
+```
+
+Common error codes:
+
+| Error Code | Meaning |
+|------------|---------|
+| `VALIDATION_ERROR` | Invalid request (missing fields, bad format) |
+| `AUTHENTICATION_ERROR` | Missing or invalid API key |
+| `QUOTA_EXCEEDED` | No validations remaining |
+| `RATE_LIMIT_ERROR` | Too many requests (retry after a moment) |
+
+## Python Library Usage
+
+```python
+from voygr import Client
+
+client = Client(api_key="pk_live_abc123")
+
+# Check a business
+result = client.check(
+    name="Starbucks",
+    address="1390 Market St, San Francisco, CA 94102",
+)
+print(result["existence_status"])  # "exists"
+print(result["open_closed_status"])  # "open"
+
+# Check remaining quota
+usage = client.usage()
+print(f"{usage['remaining']} validations left")
+
+# Sign up (no API key needed)
+client = Client()
+client.signup(email="you@example.com", name="Your Name")
+```
+
+The `Client` constructor accepts:
+
+- `api_key` -- your API key (required for `check` and `usage`)
+- `base_url` -- defaults to `https://dev.voygr.tech`
+
+All methods return a `dict` parsed from the JSON response. On HTTP errors, they raise `APIError` with `status_code`, `error_code`, and a message.
+
+```python
+from voygr import Client, APIError
+
+client = Client(api_key="pk_live_abc123")
+try:
+    result = client.check(name="Test", address="123 Main St")
+except APIError as e:
+    print(e.status_code)  # 402
+    print(e.error_code)   # "QUOTA_EXCEEDED"
+```
+
+## API Reference
+
+**Base URL:** `https://dev.voygr.tech`
+
+### POST /signup
+
+Get an API key sent to your email. No authentication required.
+
+**Request:**
+
+```json
+{"name": "Jane Smith", "email": "jane@example.com"}
+```
+
+**Response (200):**
+
+```json
+{"success": true, "message": "API key sent to your email"}
+```
+
+### POST /v1/business-status
+
+Check business existence and open/closed status. Requires `X-API-Key` header.
+
+**Request:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Business name |
+| `address` | string | yes | Full street address |
+
+```json
+{"name": "Blue Bottle Coffee", "address": "66 Mint St, San Francisco, CA 94103"}
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "existence_status": "exists",
+  "open_closed_status": "open",
+  "request_id": "abc123",
+  "validation_timestamp": "2026-03-13T12:00:00Z"
+}
+```
+
+| Field | Type | Values |
+|-------|------|--------|
+| `existence_status` | string | `exists`, `not_exists`, `uncertain` |
+| `open_closed_status` | string | `open`, `closed`, `uncertain` |
+| `request_id` | string | Unique request identifier |
+| `validation_timestamp` | string | ISO 8601 UTC timestamp |
+
+### GET /v1/usage
+
+Check remaining validation quota. Requires `X-API-Key` header.
+
+**Response (200):**
+
+```json
+{
+  "quota_limit": 100,
+  "current_usage": 12,
+  "remaining": 88,
+  "percentage_used": 12.0,
+  "period": "lifetime",
+  "status": "active"
+}
+```
+
+### Error Responses
+
+All endpoints return errors in a consistent format:
 
 ```json
 {
@@ -155,46 +322,14 @@ All errors follow a consistent format:
 }
 ```
 
-| HTTP Status | Error Code            | Meaning                        |
-|-------------|----------------------|--------------------------------|
-| 400         | `VALIDATION_ERROR`   | Invalid request body           |
-| 401         | `AUTHENTICATION_ERROR` | Missing API key              |
-| 402         | `QUOTA_EXCEEDED`     | No validations remaining       |
-| 403         | `AUTHENTICATION_ERROR` | Invalid or revoked API key   |
-| 429         | `RATE_LIMIT_ERROR`   | Too many requests              |
+| HTTP Status | Error Code | Meaning |
+|-------------|------------|---------|
+| 400 | `VALIDATION_ERROR` | Invalid request body |
+| 401 | `AUTHENTICATION_ERROR` | Missing API key |
+| 402 | `QUOTA_EXCEEDED` | No validations remaining |
+| 403 | `AUTHENTICATION_ERROR` | Invalid or revoked API key |
+| 429 | `RATE_LIMIT_ERROR` | Too many requests |
 
-## Example: Python
+## License
 
-```python
-import requests
-
-response = requests.post(
-    "https://dev.voygr.tech/v1/business-status",
-    headers={"X-API-Key": "pk_live_your_key_here"},
-    json={"name": "Whole Foods", "address": "399 4th St, San Francisco, CA 94107"},
-)
-
-data = response.json()
-print(f"Exists: {data['existence_status']}")
-print(f"Status: {data['open_closed_status']}")
-```
-
-## Example: JavaScript
-
-```javascript
-const response = await fetch("https://dev.voygr.tech/v1/business-status", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "X-API-Key": "pk_live_your_key_here",
-  },
-  body: JSON.stringify({
-    name: "Whole Foods",
-    address: "399 4th St, San Francisco, CA 94107",
-  }),
-});
-
-const data = await response.json();
-console.log(`Exists: ${data.existence_status}`);
-console.log(`Status: ${data.open_closed_status}`);
-```
+MIT
