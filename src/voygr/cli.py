@@ -33,7 +33,7 @@ def output(data: dict, pretty: bool = False) -> None:
 
 
 def error_output(error: APIError) -> None:
-    data = {"error": error.error_code or "client_error", "message": str(error)}
+    data = {"error": error.error_code or "CLIENT_ERROR", "message": str(error)}
     click.echo(json.dumps(data), err=True)
 
 

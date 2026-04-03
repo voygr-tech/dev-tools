@@ -19,7 +19,7 @@ class Client:
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self._http = httpx.Client(transport=transport) if transport else httpx.Client(timeout=60.0)
+        self._http = httpx.Client(transport=transport, timeout=60.0) if transport else httpx.Client(timeout=60.0)
 
     def _require_auth(self) -> str:
         if not self.api_key:

@@ -80,7 +80,7 @@ class TestLogoutFlow:
              patch("voygr.cli.resolve_api_key", return_value=None):
             from voygr.client import APIError
             client = MagicMock()
-            client.check.side_effect = APIError("No API key configured", error_code="client_error")
+            client.check.side_effect = APIError("No API key configured", error_code="CLIENT_ERROR")
             mock_create.return_value.__enter__ = MagicMock(return_value=client)
             mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["check", "Test", "Test"])
