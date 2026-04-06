@@ -71,14 +71,14 @@ def _format_signup(data: dict) -> str:
 
 
 def _format_login(data: dict) -> str:
-    msg = "API key saved."
+    msg = data.get("message", "API key saved.")
     if _use_color():
         msg = click.style(msg, fg="green")
     return msg
 
 
 def _format_logout(data: dict) -> str:
-    return "API key removed."
+    return data.get("message", "API key removed.")
 
 
 def _format_check(data: dict) -> str:
@@ -178,7 +178,7 @@ def logout(ctx):
 @cli.command()
 @click.argument("name", required=False, default=None)
 @click.argument("address", required=False, default=None)
-@click.option("--file", "input_file", type=click.Path(exists=True), default=None, help="CSV file with name,address columns for batch checking.")
+@click.option("--file", "input_file", type=click.Path(exists=True), default=None, help="CSV file with name,address columns. Outputs JSONL (one JSON object per line).")
 @click.pass_context
 def check(ctx, name, address, input_file):
     """Check if a business exists and whether it's open."""
@@ -215,6 +215,7 @@ def _batch_check(ctx, api_key, base_url, input_file):
     is_tty = sys.stderr.isatty()
     debug = ctx.obj.get("debug", False)
 
+    error_count = 0
     with create_client(api_key=api_key, base_url=base_url, debug=debug) as client:
         for i, row in enumerate(rows, 1):
             if is_tty:
@@ -223,6 +224,7 @@ def _batch_check(ctx, api_key, base_url, input_file):
                 result = client.check(name=row["name"], address=row["address"])
                 click.echo(json.dumps(result))
             except APIError as e:
+                error_count += 1
                 error_record = {
                     "error": e.error_code or "CLIENT_ERROR",
                     "message": str(e),
@@ -233,6 +235,9 @@ def _batch_check(ctx, api_key, base_url, input_file):
 
         if is_tty:
             click.echo(f"\rCompleted {len(rows)} checks.        ", err=True)
+
+    if error_count > 0:
+        ctx.exit(1)
 
 
 @cli.command()

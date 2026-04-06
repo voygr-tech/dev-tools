@@ -6,6 +6,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential_jitter, retry_i
 
 DEFAULT_BASE_URL = "https://dev.voygr.tech"
 
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
 
 class APIError(Exception):
     def __init__(self, message: str, status_code: int | None = None, error_code: str | None = None):
@@ -45,8 +47,6 @@ class Client:
             headers["X-API-Key"] = self._require_auth()
 
         url = f"{self.base_url}{path}"
-
-        _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
         def do_request() -> dict:
             start = time.monotonic()

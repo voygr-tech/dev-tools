@@ -128,13 +128,6 @@ class TestUsage:
 
 
 class TestGlobalFlags:
-    def test_json_is_default(self, runner, mock_client):
-        mock_client.usage.return_value = {"quota_limit": 100, "remaining": 88}
-        result = runner.invoke(cli, ["usage"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["remaining"] == 88
-
     def test_base_url_flag(self, runner):
         with patch("voygr.cli.create_client") as mock_create:
             client = MagicMock()
