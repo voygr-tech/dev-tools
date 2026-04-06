@@ -236,6 +236,27 @@ def _batch_check(ctx, api_key, base_url, input_file):
 
 
 @cli.command()
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]), required=False, default=None)
+def completions(shell):
+    """Print shell completion setup instructions."""
+    if shell is None:
+        shell_path = os.environ.get("SHELL", "")
+        if "zsh" in shell_path:
+            shell = "zsh"
+        elif "fish" in shell_path:
+            shell = "fish"
+        else:
+            shell = "bash"
+
+    lines = {
+        "bash": 'eval "$(_VOYGR_COMPLETE=bash_source voygr)"',
+        "zsh":  'eval "$(_VOYGR_COMPLETE=zsh_source voygr)"',
+        "fish": '_VOYGR_COMPLETE=fish_source voygr | source',
+    }
+    click.echo(f"# Add this to your shell profile:\n{lines[shell]}")
+
+
+@cli.command()
 @click.pass_context
 def usage(ctx):
     """Check your remaining validation quota."""

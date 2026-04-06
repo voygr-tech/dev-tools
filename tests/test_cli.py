@@ -233,6 +233,28 @@ class TestAuthResolution:
             assert result.exit_code == 0
 
 
+class TestCompletions:
+    def test_completions_bash(self, runner):
+        result = runner.invoke(cli, ["completions", "bash"])
+        assert result.exit_code == 0
+        assert "bash_source" in result.output
+
+    def test_completions_zsh(self, runner):
+        result = runner.invoke(cli, ["completions", "zsh"])
+        assert result.exit_code == 0
+        assert "zsh_source" in result.output
+
+    def test_completions_fish(self, runner):
+        result = runner.invoke(cli, ["completions", "fish"])
+        assert result.exit_code == 0
+        assert "fish_source" in result.output
+
+    def test_completions_auto_detect_zsh(self, runner):
+        result = runner.invoke(cli, ["completions"], env={"SHELL": "/bin/zsh"})
+        assert result.exit_code == 0
+        assert "zsh_source" in result.output
+
+
 class TestBatchCheck:
     def _write_csv(self, tmp_path, rows):
         path = tmp_path / "businesses.csv"
