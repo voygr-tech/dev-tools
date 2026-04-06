@@ -13,7 +13,7 @@ def resolve_base_url(ctx_base_url: str | None) -> str:
 
 
 def create_client(api_key: str | None = None, base_url: str = "https://dev.voygr.tech", debug: bool = False) -> Client:
-    return Client(api_key=api_key, base_url=base_url, debug=debug)
+    return Client(api_key=api_key, base_url=base_url, debug=debug, retries=3)
 
 
 def resolve_api_key(ctx_api_key: str | None) -> str | None:

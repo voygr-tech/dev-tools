@@ -15,6 +15,7 @@ authors = [
 dependencies = [
     "click>=8.0",
     "httpx>=0.27",
+    "tenacity>=8.0",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 import pytest
 import httpx
 from voygr.client import Client, APIError
@@ -207,3 +208,81 @@ class TestBaseUrl:
 
         client = Client(api_key="pk_live_test", base_url="https://staging.voygr.tech", transport=mock_transport(handler))
         client.usage()
+
+
+class TestRetry:
+    @patch("tenacity.nap.time.sleep", return_value=None)
+    def test_retry_on_429(self, mock_sleep):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                return json_response({"success": False, "error": "Rate limited", "error_code": "RATE_LIMIT_ERROR"}, status_code=429)
+            return json_response({"quota_limit": 100, "remaining": 88})
+        client = Client(api_key="pk_live_test", retries=3, transport=mock_transport(handler))
+        result = client.usage()
+        assert result["remaining"] == 88
+        assert call_count == 3
+
+    @patch("tenacity.nap.time.sleep", return_value=None)
+    def test_retry_on_500(self, mock_sleep):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                return json_response({"success": False, "error": "Server error", "error_code": "SERVER_ERROR"}, status_code=500)
+            return json_response({"quota_limit": 100, "remaining": 88})
+        client = Client(api_key="pk_live_test", retries=3, transport=mock_transport(handler))
+        result = client.usage()
+        assert result["remaining"] == 88
+        assert call_count == 2
+
+    def test_no_retry_on_400(self):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            return json_response({"success": False, "error": "Bad request", "error_code": "VALIDATION_ERROR"}, status_code=400)
+        client = Client(api_key="pk_live_test", retries=3, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.check(name="", address="")
+        assert exc_info.value.status_code == 400
+        assert call_count == 1
+
+    def test_no_retry_on_401(self):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            return json_response({"success": False, "error": "Unauthorized", "error_code": "AUTHENTICATION_ERROR"}, status_code=401)
+        client = Client(api_key="pk_live_bad", retries=3, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.usage()
+        assert exc_info.value.status_code == 401
+        assert call_count == 1
+
+    @patch("tenacity.nap.time.sleep", return_value=None)
+    def test_retries_exhausted(self, mock_sleep):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            return json_response({"success": False, "error": "Rate limited", "error_code": "RATE_LIMIT_ERROR"}, status_code=429)
+        client = Client(api_key="pk_live_test", retries=3, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.usage()
+        assert exc_info.value.status_code == 429
+        assert call_count == 4  # 1 initial + 3 retries
+
+    def test_no_retry_by_default(self):
+        call_count = 0
+        def handler(request):
+            nonlocal call_count
+            call_count += 1
+            return json_response({"success": False, "error": "Rate limited", "error_code": "RATE_LIMIT_ERROR"}, status_code=429)
+        client = Client(api_key="pk_live_test", transport=mock_transport(handler))
+        with pytest.raises(APIError):
+            client.usage()
+        assert call_count == 1
