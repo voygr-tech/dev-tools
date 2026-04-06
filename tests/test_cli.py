@@ -1,3 +1,4 @@
+import csv
 import json
 import pytest
 from unittest.mock import patch, MagicMock
@@ -230,3 +231,76 @@ class TestAuthResolution:
             mock_create.return_value.__exit__ = MagicMock(return_value=False)
             result = runner.invoke(cli, ["usage"], env={"VOYGR_API_KEY": "pk_live_env"})
             assert result.exit_code == 0
+
+
+class TestBatchCheck:
+    def _write_csv(self, tmp_path, rows):
+        path = tmp_path / "businesses.csv"
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["name", "address"])
+            writer.writeheader()
+            writer.writerows(rows)
+        return str(path)
+
+    def test_batch_check_from_csv(self, runner, mock_client, tmp_path):
+        mock_client.check.return_value = {
+            "success": True, "existence_status": "exists",
+            "open_closed_status": "open", "request_id": "req_1",
+            "validation_timestamp": "2026-04-03T12:00:00Z",
+        }
+        path = self._write_csv(tmp_path, [
+            {"name": "Biz A", "address": "123 Main St"},
+            {"name": "Biz B", "address": "456 Oak Ave"},
+        ])
+        result = runner.invoke(cli, ["check", "--file", path])
+        assert result.exit_code == 0
+        lines = result.output.strip().split("\n")
+        assert len(lines) == 2
+        for line in lines:
+            data = json.loads(line)
+            assert data["existence_status"] == "exists"
+
+    def test_batch_check_with_errors(self, runner, mock_client, tmp_path):
+        call_count = 0
+        def side_effect(name, address):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise APIError("Quota exceeded", status_code=402, error_code="QUOTA_EXCEEDED")
+            return {"success": True, "existence_status": "exists",
+                    "open_closed_status": "open", "request_id": "req_1",
+                    "validation_timestamp": "2026-04-03T12:00:00Z"}
+        mock_client.check.side_effect = side_effect
+        path = self._write_csv(tmp_path, [
+            {"name": "Biz A", "address": "123 Main St"},
+            {"name": "Biz B", "address": "456 Oak Ave"},
+            {"name": "Biz C", "address": "789 Pine Rd"},
+        ])
+        result = runner.invoke(cli, ["check", "--file", path])
+        lines = result.output.strip().split("\n")
+        assert len(lines) == 3
+        error_line = json.loads(lines[1])
+        assert error_line["error"] == "QUOTA_EXCEEDED"
+        assert error_line["input_name"] == "Biz B"
+
+    def test_batch_check_empty_csv(self, runner, tmp_path):
+        path = tmp_path / "empty.csv"
+        path.write_text("name,address\n")
+        result = runner.invoke(cli, ["check", "--file", str(path)])
+        assert result.exit_code != 0
+
+    def test_batch_check_missing_columns(self, runner, tmp_path):
+        path = tmp_path / "bad.csv"
+        path.write_text("foo,bar\na,b\n")
+        result = runner.invoke(cli, ["check", "--file", str(path)])
+        assert result.exit_code != 0
+
+    def test_batch_check_mutex_with_args(self, runner, tmp_path):
+        path = tmp_path / "test.csv"
+        path.write_text("name,address\nA,B\n")
+        result = runner.invoke(cli, ["check", "--file", str(path), "Name", "Addr"])
+        assert result.exit_code != 0
+
+    def test_batch_check_no_args_no_file(self, runner):
+        result = runner.invoke(cli, ["check"])
+        assert result.exit_code != 0

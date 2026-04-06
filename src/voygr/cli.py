@@ -1,5 +1,7 @@
+import csv
 import json
 import os
+import sys
 
 import click
 
@@ -174,20 +176,63 @@ def logout(ctx):
 
 
 @cli.command()
-@click.argument("name")
-@click.argument("address")
+@click.argument("name", required=False, default=None)
+@click.argument("address", required=False, default=None)
+@click.option("--file", "input_file", type=click.Path(exists=True), default=None, help="CSV file with name,address columns for batch checking.")
 @click.pass_context
-def check(ctx, name, address):
+def check(ctx, name, address, input_file):
     """Check if a business exists and whether it's open."""
+    if input_file and (name or address):
+        raise click.UsageError("Cannot use --file with positional NAME and ADDRESS arguments.")
+    if not input_file and (not name or not address):
+        raise click.UsageError("Provide NAME and ADDRESS arguments, or use --file for batch mode.")
+
     api_key = resolve_api_key(ctx.obj["api_key"])
     base_url = resolve_base_url(ctx.obj["base_url"])
-    with create_client(api_key=api_key, base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
-        try:
-            result = client.check(name=name, address=address)
-            output(result, ctx)
-        except APIError as e:
-            error_output(e, ctx)
-            ctx.exit(1)
+
+    if input_file:
+        _batch_check(ctx, api_key, base_url, input_file)
+    else:
+        with create_client(api_key=api_key, base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
+            try:
+                result = client.check(name=name, address=address)
+                output(result, ctx)
+            except APIError as e:
+                error_output(e, ctx)
+                ctx.exit(1)
+
+
+def _batch_check(ctx, api_key, base_url, input_file):
+    with open(input_file, newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    if not rows:
+        raise click.UsageError("CSV file is empty.")
+    if "name" not in rows[0] or "address" not in rows[0]:
+        raise click.UsageError("CSV must have 'name' and 'address' columns.")
+
+    is_tty = sys.stderr.isatty()
+    debug = ctx.obj.get("debug", False)
+
+    with create_client(api_key=api_key, base_url=base_url, debug=debug) as client:
+        for i, row in enumerate(rows, 1):
+            if is_tty:
+                click.echo(f"\rProcessing {i}/{len(rows)}...", nl=False, err=True)
+            try:
+                result = client.check(name=row["name"], address=row["address"])
+                click.echo(json.dumps(result))
+            except APIError as e:
+                error_record = {
+                    "error": e.error_code or "CLIENT_ERROR",
+                    "message": str(e),
+                    "input_name": row["name"],
+                    "input_address": row["address"],
+                }
+                click.echo(json.dumps(error_record))
+
+        if is_tty:
+            click.echo(f"\rCompleted {len(rows)} checks.        ", err=True)
 
 
 @cli.command()
