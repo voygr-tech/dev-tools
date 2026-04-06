@@ -39,13 +39,20 @@ voygr check "Starbucks" "1390 Market St, San Francisco, CA 94102"
 ```
 
 ```json
-{
-  "success": true,
-  "existence_status": "exists",
-  "open_closed_status": "open",
-  "request_id": "abc123",
-  "validation_timestamp": "2026-03-13T12:00:00Z"
-}
+{"success":true,"existence_status":"exists","open_closed_status":"open","request_id":"abc123","validation_timestamp":"2026-03-13T12:00:00Z"}
+```
+
+Default output is compact JSON. Add `--human` for a readable format:
+
+```bash
+voygr --human check "Starbucks" "1390 Market St, San Francisco, CA 94102"
+```
+
+```
+existence_status: exists
+open_closed_status: open
+request_id: abc123
+validation_timestamp: 2026-03-13T12:00:00Z
 ```
 
 ## Command Reference
@@ -103,18 +110,20 @@ voygr check "Blue Bottle Coffee" "66 Mint St, San Francisco, CA 94103"
 ```
 
 ```json
-{
-  "success": true,
-  "existence_status": "exists",
-  "open_closed_status": "open",
-  "request_id": "req_7f2a",
-  "validation_timestamp": "2026-04-03T15:30:00Z"
-}
+{"success":true,"existence_status":"exists","open_closed_status":"open","request_id":"req_7f2a","validation_timestamp":"2026-04-03T15:30:00Z"}
 ```
 
 **`existence_status`** values: `exists`, `not_exists`, `uncertain`
 
 **`open_closed_status`** values: `open`, `closed`, `uncertain`
+
+### `voygr check --file <csv>`
+
+Batch mode. Reads a CSV file with `name` and `address` columns and checks each row. Output is JSONL (one JSON object per line).
+
+Exits with code 1 if any check in the batch fails.
+
+See the [Batch Mode](#batch-mode) section for details.
 
 ### `voygr usage`
 
@@ -125,15 +134,43 @@ voygr usage
 ```
 
 ```json
-{
-  "quota_limit": 100,
-  "current_usage": 12,
-  "remaining": 88,
-  "percentage_used": 12.0,
-  "period": "lifetime",
-  "status": "active"
-}
+{"quota_limit":100,"current_usage":12,"remaining":88,"percentage_used":12.0,"period":"lifetime","status":"active"}
 ```
+
+### `voygr completions [bash|zsh|fish]`
+
+Print shell completion setup instructions for the given shell. See [Shell Completions](#shell-completions).
+
+## Batch Mode
+
+Use `--file` to check multiple businesses from a CSV file:
+
+```bash
+voygr check --file businesses.csv
+```
+
+The CSV must have a header row with `name` and `address` columns:
+
+```csv
+name,address
+Starbucks,"1390 Market St, San Francisco, CA 94102"
+Blue Bottle Coffee,"66 Mint St, San Francisco, CA 94103"
+```
+
+Output is JSONL -- one JSON object per line, making it easy to pipe into `jq` or other tools:
+
+```jsonl
+{"success":true,"existence_status":"exists","open_closed_status":"open","request_id":"req_a1","validation_timestamp":"2026-04-03T15:30:00Z"}
+{"success":true,"existence_status":"exists","open_closed_status":"open","request_id":"req_a2","validation_timestamp":"2026-04-03T15:30:01Z"}
+```
+
+If a row fails, the error record includes `input_name` and `input_address` so you can trace it back:
+
+```json
+{"success":false,"error":"RATE_LIMIT_ERROR","message":"Too many requests","input_name":"Starbucks","input_address":"1390 Market St, San Francisco, CA 94102"}
+```
+
+The command exits with code 1 if any check in the batch fails, even if others succeeded.
 
 ## Global Flags
 
@@ -143,10 +180,12 @@ These flags apply to every command:
 |------|-------------|
 | `--api-key KEY` | API key for this request. Overrides env var and config file. |
 | `--base-url URL` | API base URL. Defaults to `https://dev.voygr.tech`. |
-| `--pretty` | Pretty-print JSON output with indentation. |
+| `--human` | Human-readable output. Default is JSON. |
+| `--debug` | Print HTTP request details to stderr. |
+| `--version` | Show version and exit. |
 
 ```bash
-voygr --api-key pk_live_abc123 --pretty check "Whole Foods" "399 4th St, SF, CA"
+voygr --api-key pk_live_abc123 --human check "Whole Foods" "399 4th St, SF, CA"
 ```
 
 ## Environment Variables
@@ -170,6 +209,37 @@ The API key is resolved in this order:
 3. Config file at `~/.config/voygr/config.json`
 
 If none of these are set, commands that require authentication (`check`, `usage`) will exit with an error.
+
+## Retry Behavior
+
+The CLI automatically retries requests that fail with 429 (rate limit) or 5xx (server error) responses. Retries use exponential backoff, up to 3 attempts.
+
+No configuration needed for CLI usage -- retries are always on.
+
+For library users, pass `retries` to the constructor:
+
+```python
+client = Client(api_key="pk_live_abc123", retries=3)
+```
+
+Set `retries=0` to disable (the default for the library).
+
+## Shell Completions
+
+Generate completion setup instructions for your shell:
+
+```bash
+# Bash
+voygr completions bash
+
+# Zsh
+voygr completions zsh
+
+# Fish
+voygr completions fish
+```
+
+Each command prints the snippet you need to add to your shell config (`.bashrc`, `.zshrc`, or `~/.config/fish/config.fish`). Follow the printed instructions to enable tab completion for all commands and flags.
 
 ## Exit Codes
 
@@ -224,6 +294,7 @@ The `Client` constructor accepts:
 
 - `api_key` -- your API key (required for `check` and `usage`)
 - `base_url` -- defaults to `https://dev.voygr.tech`
+- `retries` -- number of retries on 429/5xx errors (default `0`)
 
 All methods return a `dict` parsed from the JSON response. On HTTP errors, they raise `APIError` with `status_code`, `error_code`, and a message.
 
