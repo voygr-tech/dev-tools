@@ -3,6 +3,7 @@ import os
 
 import click
 
+from voygr import __version__
 from voygr.client import Client, APIError
 from voygr.config import load_config, save_api_key, delete_config
 
@@ -11,8 +12,8 @@ def resolve_base_url(ctx_base_url: str | None) -> str:
     return ctx_base_url or os.environ.get("VOYGR_BASE_URL", "https://dev.voygr.tech")
 
 
-def create_client(api_key: str | None = None, base_url: str = "https://dev.voygr.tech") -> Client:
-    return Client(api_key=api_key, base_url=base_url)
+def create_client(api_key: str | None = None, base_url: str = "https://dev.voygr.tech", debug: bool = False) -> Client:
+    return Client(api_key=api_key, base_url=base_url, debug=debug)
 
 
 def resolve_api_key(ctx_api_key: str | None) -> str | None:
@@ -126,13 +127,16 @@ def _format_usage(data: dict) -> str:
 @click.option("--api-key", default=None, help="API key (overrides env and config).")
 @click.option("--base-url", default=None, help="API base URL.")
 @click.option("--human", is_flag=True, default=False, help="Human-readable output.")
+@click.option("--debug", is_flag=True, default=False, help="Print HTTP debug info to stderr.")
+@click.version_option(version=__version__, prog_name="voygr")
 @click.pass_context
-def cli(ctx, api_key, base_url, human):
+def cli(ctx, api_key, base_url, human, debug):
     """Voygr Business Validation API client."""
     ctx.ensure_object(dict)
     ctx.obj["api_key"] = api_key
     ctx.obj["base_url"] = base_url
     ctx.obj["human"] = human
+    ctx.obj["debug"] = debug
 
 
 @cli.command()
@@ -143,7 +147,7 @@ def signup(ctx, email, name):
     """Request an API key via email."""
     name = name or email
     base_url = resolve_base_url(ctx.obj["base_url"])
-    with create_client(base_url=base_url) as client:
+    with create_client(base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
         try:
             result = client.signup(email=email, name=name)
             output(result, ctx)
@@ -177,7 +181,7 @@ def check(ctx, name, address):
     """Check if a business exists and whether it's open."""
     api_key = resolve_api_key(ctx.obj["api_key"])
     base_url = resolve_base_url(ctx.obj["base_url"])
-    with create_client(api_key=api_key, base_url=base_url) as client:
+    with create_client(api_key=api_key, base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
         try:
             result = client.check(name=name, address=address)
             output(result, ctx)
@@ -192,7 +196,7 @@ def usage(ctx):
     """Check your remaining validation quota."""
     api_key = resolve_api_key(ctx.obj["api_key"])
     base_url = resolve_base_url(ctx.obj["base_url"])
-    with create_client(api_key=api_key, base_url=base_url) as client:
+    with create_client(api_key=api_key, base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
         try:
             result = client.usage()
             output(result, ctx)

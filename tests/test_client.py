@@ -177,6 +177,28 @@ class TestErrorHandling:
             assert result["remaining"] == 100
 
 
+class TestDebugOutput:
+    def test_debug_prints_to_stderr(self, capsys):
+        def handler(request):
+            return json_response({"quota_limit": 100, "remaining": 88})
+
+        client = Client(api_key="pk_live_test", debug=True, transport=mock_transport(handler))
+        client.usage()
+        captured = capsys.readouterr()
+        assert "DEBUG" in captured.err
+        assert "GET" in captured.err
+        assert "/v1/usage" in captured.err
+
+    def test_no_debug_by_default(self, capsys):
+        def handler(request):
+            return json_response({"quota_limit": 100, "remaining": 88})
+
+        client = Client(api_key="pk_live_test", transport=mock_transport(handler))
+        client.usage()
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+
 class TestBaseUrl:
     def test_custom_base_url(self):
         def handler(request):

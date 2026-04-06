@@ -196,6 +196,21 @@ class TestOutputFormat:
         assert "\033[" not in result.output
 
 
+class TestVersion:
+    def test_version_flag(self, runner):
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert "0.1.0" in result.output
+        assert "voygr" in result.output.lower()
+
+
+class TestDebugFlag:
+    def test_debug_flag_accepted(self, runner, mock_client):
+        mock_client.usage.return_value = {"remaining": 88}
+        result = runner.invoke(cli, ["--debug", "usage"])
+        assert result.exit_code == 0
+
+
 class TestAuthResolution:
     def test_flag_overrides_env(self, runner):
         with patch("voygr.cli.create_client") as mock_create:

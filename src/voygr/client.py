@@ -1,3 +1,6 @@
+import sys
+import time
+
 import httpx
 
 DEFAULT_BASE_URL = "https://dev.voygr.tech"
@@ -15,10 +18,12 @@ class Client:
         self,
         api_key: str | None = None,
         base_url: str = DEFAULT_BASE_URL,
+        debug: bool = False,
         transport: httpx.BaseTransport | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self._debug = debug
         self._http = httpx.Client(transport=transport, timeout=60.0) if transport else httpx.Client(timeout=60.0)
 
     def _require_auth(self) -> str:
@@ -31,12 +36,24 @@ class Client:
         if auth:
             headers["X-API-Key"] = self._require_auth()
 
+        url = f"{self.base_url}{path}"
+        start = time.monotonic()
         try:
-            response = self._http.request(method, f"{self.base_url}{path}", headers=headers, **kwargs)
+            response = self._http.request(method, url, headers=headers, **kwargs)
         except httpx.TimeoutException:
+            if self._debug:
+                elapsed = time.monotonic() - start
+                print(f"DEBUG {method} {url} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
             raise APIError("Request timed out")
         except httpx.HTTPError as e:
+            if self._debug:
+                elapsed = time.monotonic() - start
+                print(f"DEBUG {method} {url} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
             raise APIError(f"Request failed: {e}")
+
+        if self._debug:
+            elapsed = time.monotonic() - start
+            print(f"DEBUG {method} {url} -> {response.status_code} ({elapsed:.3f}s)", file=sys.stderr)
 
         try:
             data = response.json()
