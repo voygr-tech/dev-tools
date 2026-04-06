@@ -127,12 +127,12 @@ class TestUsage:
 
 
 class TestGlobalFlags:
-    def test_pretty_output(self, runner, mock_client):
+    def test_json_is_default(self, runner, mock_client):
         mock_client.usage.return_value = {"quota_limit": 100, "remaining": 88}
-        result = runner.invoke(cli, ["--pretty", "usage"])
+        result = runner.invoke(cli, ["usage"])
         assert result.exit_code == 0
-        assert "\n" in result.output
-        assert "  " in result.output  # indented
+        data = json.loads(result.output)
+        assert data["remaining"] == 88
 
     def test_base_url_flag(self, runner):
         with patch("voygr.cli.create_client") as mock_create:
@@ -144,6 +144,56 @@ class TestGlobalFlags:
             mock_create.assert_called_once()
             call_kwargs = mock_create.call_args
             assert call_kwargs[1]["base_url"] == "https://staging.voygr.tech" or call_kwargs[0][1] == "https://staging.voygr.tech"
+
+
+class TestOutputFormat:
+    def test_default_is_json(self, runner, mock_client):
+        mock_client.usage.return_value = {"quota_limit": 100, "remaining": 88}
+        result = runner.invoke(cli, ["usage"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["remaining"] == 88
+
+    def test_human_flag(self, runner, mock_client):
+        mock_client.check.return_value = {
+            "success": True,
+            "existence_status": "exists",
+            "open_closed_status": "open",
+            "request_id": "req_abc",
+            "validation_timestamp": "2026-04-03T12:00:00Z",
+        }
+        result = runner.invoke(cli, ["--human", "check", "Starbucks", "123 Main St"])
+        assert result.exit_code == 0
+        assert "exists" in result.output.lower()
+        assert "open" in result.output.lower()
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
+
+    def test_human_usage_output(self, runner, mock_client):
+        mock_client.usage.return_value = {
+            "quota_limit": 100,
+            "current_usage": 12,
+            "remaining": 88,
+            "percentage_used": 12.0,
+            "period": "lifetime",
+            "status": "active",
+        }
+        result = runner.invoke(cli, ["--human", "usage"])
+        assert result.exit_code == 0
+        assert "88" in result.output
+        assert "100" in result.output
+
+    def test_human_error_output(self, runner, mock_client):
+        mock_client.check.side_effect = APIError("Invalid API key", status_code=401, error_code="AUTHENTICATION_ERROR")
+        result = runner.invoke(cli, ["--human", "check", "Test", "Test"])
+        assert result.exit_code == 1
+        assert "Invalid API key" in result.output
+
+    def test_no_color_env(self, runner, mock_client):
+        mock_client.usage.return_value = {"quota_limit": 100, "remaining": 88}
+        result = runner.invoke(cli, ["--human", "usage"], env={"NO_COLOR": "1"})
+        assert result.exit_code == 0
+        assert "\033[" not in result.output
 
 
 class TestAuthResolution:
