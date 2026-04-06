@@ -71,6 +71,8 @@ class Client:
                 data = response.json()
             except ValueError:
                 if response.status_code >= 400:
+                    if response.status_code in _RETRYABLE_STATUS_CODES:
+                        raise _RetryableError(f"HTTP {response.status_code}", status_code=response.status_code)
                     raise APIError(f"HTTP {response.status_code}", status_code=response.status_code)
                 raise APIError(f"Invalid JSON response from server")
 

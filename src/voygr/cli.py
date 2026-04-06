@@ -119,7 +119,7 @@ def _format_usage(data: dict) -> str:
 
     # Simple progress bar
     bar_width = 20
-    filled = int(bar_width * pct / 100) if quota > 0 else 0
+    filled = min(int(bar_width * pct / 100), bar_width) if quota > 0 else 0
     bar = "█" * filled + "░" * (bar_width - filled)
     lines.append(f"[{bar}] {pct:.1f}%")
     return "\n".join(lines)
