@@ -55,6 +55,7 @@ def error_output(error: APIError, ctx) -> None:
 def format_human(cmd_name: str, data: dict) -> str:
     formatters = {
         "signup": _format_signup,
+        "recover": _format_recover,
         "login": _format_login,
         "logout": _format_logout,
         "check": _format_check,
@@ -68,6 +69,13 @@ def format_human(cmd_name: str, data: dict) -> str:
 
 def _format_signup(data: dict) -> str:
     return data.get("message", "API key sent to your email.")
+
+
+def _format_recover(data: dict) -> str:
+    return data.get(
+        "message",
+        "If an account exists for that email, a recovery link has been sent.",
+    )
 
 
 def _format_login(data: dict) -> str:
@@ -152,6 +160,26 @@ def signup(ctx, email, name):
     with create_client(base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
         try:
             result = client.signup(email=email, name=name)
+            output(result, ctx)
+        except APIError as e:
+            error_output(e, ctx)
+            ctx.exit(1)
+
+
+@cli.command()
+@click.argument("email")
+@click.pass_context
+def recover(ctx, email):
+    """Request a recovery link for a forgotten or lost API key.
+
+    The link is sent to the provided email if an account exists. Clicking it
+    rotates the existing key and emails the new one. The current key stops
+    working at that moment.
+    """
+    base_url = resolve_base_url(ctx.obj["base_url"])
+    with create_client(base_url=base_url, debug=ctx.obj.get("debug", False)) as client:
+        try:
+            result = client.recover(email=email)
             output(result, ctx)
         except APIError as e:
             error_output(e, ctx)

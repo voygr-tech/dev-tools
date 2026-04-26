@@ -44,6 +44,41 @@ class TestSignup:
         assert "error" in error
 
 
+class TestRecover:
+    def test_recover_success(self, runner, mock_client):
+        mock_client.recover.return_value = {
+            "success": True,
+            "message": "If an account exists for that email, a recovery link has been sent.",
+        }
+        result = runner.invoke(cli, ["recover", "test@example.com"])
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["success"] is True
+        mock_client.recover.assert_called_once_with(email="test@example.com")
+
+    def test_recover_human_output(self, runner, mock_client):
+        mock_client.recover.return_value = {
+            "success": True,
+            "message": "If an account exists for that email, a recovery link has been sent.",
+        }
+        result = runner.invoke(cli, ["--human", "recover", "test@example.com"])
+        assert result.exit_code == 0
+        assert "recovery link" in result.output
+
+    def test_recover_api_error(self, runner, mock_client):
+        mock_client.recover.side_effect = APIError(
+            "Too many requests", status_code=429, error_code="RATE_LIMIT_ERROR",
+        )
+        result = runner.invoke(cli, ["recover", "test@example.com"])
+        assert result.exit_code == 1
+        error = json.loads(result.output)
+        assert error["error"] == "RATE_LIMIT_ERROR"
+
+    def test_recover_missing_email(self, runner):
+        result = runner.invoke(cli, ["recover"])
+        assert result.exit_code != 0
+
+
 class TestLogin:
     def test_login_stores_key(self, runner):
         with patch("voygr.cli.save_api_key") as mock_save:
