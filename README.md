@@ -55,6 +55,18 @@ request_id: abc123
 validation_timestamp: 2026-03-13T12:00:00Z
 ```
 
+## Recovering a lost API key
+
+If you lose access to your API key, request a recovery link:
+
+```bash
+voygr recover you@example.com
+```
+
+A link is sent to the email if an account exists. Clicking it **rotates** your key — the existing one stops working immediately, and a new one is sent to the same address. Remaining quota and plan tier carry over.
+
+See [`voygr recover`](#voygr-recover-email) for full details.
+
 ## Command Reference
 
 ### `voygr signup <email> [--name NAME]`
@@ -72,7 +84,23 @@ voygr signup jane@example.com --name "Jane Smith"
 {"success": true, "message": "API key sent to your email"}
 ```
 
-No authentication required. Submitting the same email again re-sends your existing key.
+No authentication required. If the email already has an account, the response directs you to `voygr recover` instead of resending the key.
+
+### `voygr recover <email>`
+
+Request a recovery link for a forgotten or lost API key. The link is sent to the provided email if an account exists.
+
+```bash
+voygr recover jane@example.com
+```
+
+```json
+{"success": true, "message": "If an account exists for that email, a recovery link has been sent."}
+```
+
+Clicking the link rotates your API key — the existing key stops working at that moment, and the new one is sent to the same email. Remaining quota and plan tier carry over to the new key.
+
+The response is uniform whether or not the email is registered, so it cannot be used to enumerate accounts. Rate-limited per email and per source IP.
 
 ### `voygr login <api-key>`
 

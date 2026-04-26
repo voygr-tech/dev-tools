@@ -108,6 +108,9 @@ class Client:
     def signup(self, email: str, name: str) -> dict:
         return self._request("POST", "/signup", auth=False, json={"email": email, "name": name})
 
+    def recover(self, email: str) -> dict:
+        return self._request("POST", "/recover", auth=False, json={"email": email})
+
     def check(self, name: str, address: str) -> dict:
         return self._request("POST", "/v1/business-status", json={"name": name, "address": address})
 

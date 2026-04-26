@@ -51,6 +51,65 @@ class TestSignup:
         client.signup(email="test@example.com", name="Test User")
 
 
+class TestRecover:
+    def test_recover_success(self):
+        def handler(request):
+            body = json.loads(request.content)
+            assert body == {"email": "test@example.com"}
+            assert request.url.path == "/recover"
+            assert request.method == "POST"
+            return json_response({
+                "success": True,
+                "message": "If an account exists for that email, a recovery link has been sent.",
+            })
+
+        client = Client(api_key=None, transport=mock_transport(handler))
+        result = client.recover(email="test@example.com")
+        assert result["success"] is True
+        assert "recovery link" in result["message"]
+
+    def test_recover_no_auth_header(self):
+        def handler(request):
+            assert "X-API-Key" not in request.headers
+            return json_response({"success": True, "message": "ok"})
+
+        client = Client(api_key=None, transport=mock_transport(handler))
+        client.recover(email="test@example.com")
+
+    def test_recover_does_not_send_existing_key(self):
+        def handler(request):
+            assert "X-API-Key" not in request.headers
+            return json_response({"success": True, "message": "ok"})
+
+        client = Client(api_key="pk_live_existing", transport=mock_transport(handler))
+        client.recover(email="test@example.com")
+
+    def test_recover_429_rate_limited(self):
+        def handler(request):
+            return json_response(
+                {"success": False, "error": "Too many requests", "error_code": "RATE_LIMIT_ERROR"},
+                status_code=429,
+            )
+
+        client = Client(api_key=None, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.recover(email="test@example.com")
+        assert exc_info.value.status_code == 429
+
+    def test_recover_400_validation_error(self):
+        def handler(request):
+            return json_response(
+                {"success": False, "error": "Invalid input provided", "error_code": "VALIDATION_ERROR"},
+                status_code=400,
+            )
+
+        client = Client(api_key=None, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.recover(email="not-an-email")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "VALIDATION_ERROR"
+
+
 class TestCheckBusiness:
     def test_check_success(self):
         def handler(request):
