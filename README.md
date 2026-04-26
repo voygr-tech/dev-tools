@@ -55,13 +55,17 @@ request_id: abc123
 validation_timestamp: 2026-03-13T12:00:00Z
 ```
 
-### Lost your API key?
+## Recovering a lost API key
+
+If you lose access to your API key, request a recovery link:
 
 ```bash
 voygr recover you@example.com
 ```
 
-A recovery link is sent to the email. Clicking it rotates the key and sends the new one to the same address.
+A link is sent to the email if an account exists. Clicking it **rotates** your key — the existing one stops working immediately, and a new one is sent to the same address. Remaining quota and plan tier carry over.
+
+See [`voygr recover`](#voygr-recover-email) for full details.
 
 ## Command Reference
 

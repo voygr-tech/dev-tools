@@ -96,6 +96,19 @@ class TestRecover:
             client.recover(email="test@example.com")
         assert exc_info.value.status_code == 429
 
+    def test_recover_400_validation_error(self):
+        def handler(request):
+            return json_response(
+                {"success": False, "error": "Invalid input provided", "error_code": "VALIDATION_ERROR"},
+                status_code=400,
+            )
+
+        client = Client(api_key=None, transport=mock_transport(handler))
+        with pytest.raises(APIError) as exc_info:
+            client.recover(email="not-an-email")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "VALIDATION_ERROR"
+
 
 class TestCheckBusiness:
     def test_check_success(self):
