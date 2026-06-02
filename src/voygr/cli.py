@@ -231,38 +231,61 @@ def check(ctx, name, address, input_file):
 
 
 def _batch_check(ctx, api_key, base_url, input_file):
-    with open(input_file, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    if not rows:
-        raise click.UsageError("CSV file is empty.")
-    if "name" not in rows[0] or "address" not in rows[0]:
-        raise click.UsageError("CSV must have 'name' and 'address' columns.")
-
     is_tty = sys.stderr.isatty()
     debug = ctx.obj.get("debug", False)
 
     error_count = 0
-    with create_client(api_key=api_key, base_url=base_url, debug=debug) as client:
-        for i, row in enumerate(rows, 1):
+    checked_count = 0
+
+    with open(input_file, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        
+        if reader.fieldnames is None:
+            raise click.UsageError("CSV file is empty.")
+        if "name" not in reader.fieldnames or "address" not in reader.fieldnames:
+            raise click.UsageError("CSV must have 'name' and 'address' columns.")
+
+        try:
+            first_row = next(reader)
+        except StopIteration:
+            raise click.UsageError("CSV file contains no data rows.")
+
+        with create_client(api_key=api_key, base_url=base_url, debug=debug) as client:
+            checked_count = 1
             if is_tty:
-                click.echo(f"\rProcessing {i}/{len(rows)}...", nl=False, err=True)
+                click.echo(f"\rProcessing 1...", nl=False, err=True)
             try:
-                result = client.check(name=row["name"], address=row["address"])
+                result = client.check(name=first_row["name"], address=first_row["address"])
                 click.echo(json.dumps(result))
             except APIError as e:
                 error_count += 1
                 error_record = {
                     "error": e.error_code or "CLIENT_ERROR",
                     "message": str(e),
-                    "input_name": row["name"],
-                    "input_address": row["address"],
+                    "input_name": first_row["name"],
+                    "input_address": first_row["address"],
                 }
                 click.echo(json.dumps(error_record))
 
-        if is_tty:
-            click.echo(f"\rCompleted {len(rows)} checks.        ", err=True)
+            for i, row in enumerate(reader, 2):
+                checked_count = i
+                if is_tty:
+                    click.echo(f"\rProcessing {i}...", nl=False, err=True)
+                try:
+                    result = client.check(name=row["name"], address=row["address"])
+                    click.echo(json.dumps(result))
+                except APIError as e:
+                    error_count += 1
+                    error_record = {
+                        "error": e.error_code or "CLIENT_ERROR",
+                        "message": str(e),
+                        "input_name": row["name"],
+                        "input_address": row["address"],
+                    }
+                    click.echo(json.dumps(error_record))
+
+            if is_tty:
+                click.echo(f"\rCompleted {checked_count} checks.        ", err=True)
 
     if error_count > 0:
         ctx.exit(1)
