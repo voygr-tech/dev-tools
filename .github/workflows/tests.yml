@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install pytest-cov
+
+      - name: Run tests
+        # --cov-fail-under=0: coverage is informational only for the eng-dashboard, never a merge gate
+        run: pytest --cov=voygr --cov-report=json:coverage-report.json --cov-fail-under=0
+
+      - name: Generate coverage summary
+        run: |
+          python -c "import json; d=json.load(open('coverage-report.json')); json.dump({'coverage': round(d['totals']['percent_covered'], 1)}, open('coverage-summary.json','w'))"
+
+      - name: Upload coverage summary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-summary
+          path: coverage-summary.json
