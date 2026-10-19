@@ -10,7 +10,7 @@ pip install voygr
 
 Requires Python 3.10+.
 
-## Quick Start
+## Quick start
 
 ### 1. Sign up for an API key
 
@@ -63,18 +63,16 @@ If you lose access to your API key, request a recovery link:
 voygr recover you@example.com
 ```
 
-A link is sent to the email if an account exists. Clicking it **rotates** your key — the existing one stops working immediately, and a new one is sent to the same address. Remaining quota and plan tier carry over.
-
 See [`voygr recover`](#voygr-recover-email) for full details.
 
-## Command Reference
+## Command reference
 
 ### `voygr signup <email> [--name NAME]`
 
 Request an API key. The key is sent to the provided email address.
 
-- `email` (required) -- email address to receive the key
-- `--name` -- your name; defaults to the email if omitted
+- `email` (required): email address to receive the key
+- `--name`: your name; defaults to the email if omitted
 
 ```bash
 voygr signup jane@example.com --name "Jane Smith"
@@ -98,7 +96,7 @@ voygr recover jane@example.com
 {"success": true, "message": "If an account exists for that email, a recovery link has been sent."}
 ```
 
-Clicking the link rotates your API key — the existing key stops working at that moment, and the new one is sent to the same email. Remaining quota and plan tier carry over to the new key.
+Clicking the link rotates your API key. The existing key stops working at that moment, and the new one is sent to the same email. Remaining quota and plan tier carry over to the new key.
 
 The response is uniform whether or not the email is registered, so it cannot be used to enumerate accounts. Rate-limited per email and per source IP.
 
@@ -130,8 +128,8 @@ voygr logout
 
 Check whether a business exists at the given address and whether it's open or closed. Requires authentication.
 
-- `name` (required) -- business name
-- `address` (required) -- full street address
+- `name` (required): business name
+- `address` (required): full street address
 
 ```bash
 voygr check "Blue Bottle Coffee" "66 Mint St, San Francisco, CA 94103"
@@ -149,9 +147,7 @@ voygr check "Blue Bottle Coffee" "66 Mint St, San Francisco, CA 94103"
 
 Batch mode. Reads a CSV file with `name` and `address` columns and checks each row. Output is JSONL (one JSON object per line).
 
-Exits with code 1 if any check in the batch fails.
-
-See the [Batch Mode](#batch-mode) section for details.
+See the [Batch mode](#batch-mode) section for details.
 
 ### `voygr usage`
 
@@ -167,9 +163,9 @@ voygr usage
 
 ### `voygr completions [bash|zsh|fish]`
 
-Print shell completion setup instructions for the given shell. See [Shell Completions](#shell-completions).
+Print shell completion setup instructions for the given shell. See [Shell completions](#shell-completions).
 
-## Batch Mode
+## Batch mode
 
 Use `--file` to check multiple businesses from a CSV file:
 
@@ -185,7 +181,7 @@ Starbucks,"1390 Market St, San Francisco, CA 94102"
 Blue Bottle Coffee,"66 Mint St, San Francisco, CA 94103"
 ```
 
-Output is JSONL -- one JSON object per line, making it easy to pipe into `jq` or other tools:
+Output is JSONL, which you can pipe into `jq` or other tools:
 
 ```jsonl
 {"success":true,"existence_status":"exists","open_closed_status":"open","request_id":"req_a1","validation_timestamp":"2026-04-03T15:30:00Z"}
@@ -200,7 +196,7 @@ If a row fails, the error record includes `input_name` and `input_address` so yo
 
 The command exits with code 1 if any check in the batch fails, even if others succeeded.
 
-## Global Flags
+## Global flags
 
 These flags apply to every command:
 
@@ -216,7 +212,7 @@ These flags apply to every command:
 voygr --api-key pk_live_abc123 --human check "Whole Foods" "399 4th St, SF, CA"
 ```
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|
@@ -238,11 +234,11 @@ The API key is resolved in this order:
 
 If none of these are set, commands that require authentication (`check`, `usage`) will exit with an error.
 
-## Retry Behavior
+## Retry behavior
 
-The CLI automatically retries requests that fail with 429 (rate limit) or 5xx (server error) responses. Retries use exponential backoff, up to 3 attempts.
+The CLI retries requests that fail with 429 (rate limit) or 5xx (server error) responses. Retries use exponential backoff, up to 3 attempts.
 
-No configuration needed for CLI usage -- retries are always on.
+Retries are always on in the CLI; you don't need to configure them.
 
 For library users, pass `retries` to the constructor:
 
@@ -252,7 +248,7 @@ client = Client(api_key="pk_live_abc123", retries=3)
 
 Set `retries=0` to disable (the default for the library).
 
-## Shell Completions
+## Shell completions
 
 Generate completion setup instructions for your shell:
 
@@ -269,7 +265,7 @@ voygr completions fish
 
 Each command prints the snippet you need to add to your shell config (`.bashrc`, `.zshrc`, or `~/.config/fish/config.fish`). Follow the printed instructions to enable tab completion for all commands and flags.
 
-## Exit Codes
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -277,7 +273,7 @@ Each command prints the snippet you need to add to your shell config (`.bashrc`,
 | `1` | API error (bad request, auth failure, quota exceeded, network error) |
 | `2` | User error (missing argument, invalid flag) |
 
-## Error Format
+## Error format
 
 All errors are written to stderr as JSON:
 
@@ -294,7 +290,7 @@ Common error codes:
 | `QUOTA_EXCEEDED` | No validations remaining |
 | `RATE_LIMIT_ERROR` | Too many requests (retry after a moment) |
 
-## Python Library Usage
+## Python library usage
 
 ```python
 from voygr import Client
@@ -320,9 +316,9 @@ client.signup(email="you@example.com", name="Your Name")
 
 The `Client` constructor accepts:
 
-- `api_key` -- your API key (required for `check` and `usage`)
-- `base_url` -- defaults to `https://dev.voygr.tech`
-- `retries` -- number of retries on 429/5xx errors (default `0`)
+- `api_key`: your API key (required for `check` and `usage`)
+- `base_url`: defaults to `https://dev.voygr.tech`
+- `retries`: number of retries on 429/5xx errors (default `0`)
 
 All methods return a `dict` parsed from the JSON response. On HTTP errors, they raise `APIError` with `status_code`, `error_code`, and a message.
 
@@ -337,7 +333,7 @@ except APIError as e:
     print(e.error_code)   # "QUOTA_EXCEEDED"
 ```
 
-## API Reference
+## API reference
 
 **Base URL:** `https://dev.voygr.tech`
 
@@ -408,7 +404,7 @@ Check remaining validation quota. Requires `X-API-Key` header.
 }
 ```
 
-### Error Responses
+### Error responses
 
 All endpoints return errors in a consistent format:
 
