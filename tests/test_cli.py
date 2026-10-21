@@ -313,6 +313,12 @@ class TestValidate:
 
 
 class TestEnrich:
+    def test_max_credits_help_says_it_is_per_place_and_per_row(self, runner):
+        result = runner.invoke(cli, ["enrich", "--help"])
+        help_text = " ".join(result.output.split())
+        assert "The cap is per place; with --file, it is per row." in help_text
+        assert "Refuse the request" not in help_text
+
     def test_enrich_defaults(self, runner, mock_client):
         mock_client.enrich.return_value = {"success": True, "attributes": {}}
         result = runner.invoke(cli, ["enrich", "X"])
@@ -465,6 +471,490 @@ class TestPricing:
         mock_client.pricing.side_effect = APIError("Request timed out")
         result = runner.invoke(cli, ["pricing"])
         assert result.exit_code == 1
+
+
+PLACES_CSV = "name,address,country\nCafe Roma,1 Main St,us\nBar Uno,,\n"
+PLACES = [{"poi_name": "Cafe Roma", "address": "1 Main St", "country": "US"}, {"poi_name": "Bar Uno"}]
+
+SUBMITTED = {
+    "batch_id": "b-1", "type": "validate", "status": "queued", "created_at": "2026-10-21T10:00:00Z",
+    "total_items": 2, "eta_seconds": 10, "eta_completion_at": "2026-10-21T10:00:10Z",
+}
+COMPLETED = {
+    "batch_id": "b-1", "type": "validate", "status": "completed", "total_items": 2,
+    "progress": {"processed": 2, "succeeded": 2, "failed": 0}, "error": None, "error_code": None,
+    "results": {"format": "jsonl.gz", "total_items": 2, "files": []},
+}
+ROWS = [
+    {"id": None, "success": True, "existence_confidence": 0.94, "error": None, "error_code": None},
+    {"id": None, "success": True, "existence_confidence": 0.31, "error": None, "error_code": None},
+]
+STOPPED_WAITING = (
+    "Stopped waiting. Job b-1 keeps running.\n"
+    "  Results: voygr jobs results b-1\n"
+    "  Cancel:  voygr jobs cancel b-1\n"
+)
+
+
+STILL_ON_SERVER = "Job b-1 is still on the server. Results: voygr jobs results b-1"
+
+
+def json_lines(text: str) -> list[dict]:
+    return [json.loads(line) for line in text.splitlines()]
+
+
+@pytest.fixture
+def places_file(tmp_path):
+    path = tmp_path / "places.csv"
+    path.write_text(PLACES_CSV, encoding="utf-8")
+    return str(path)
+
+
+@pytest.fixture
+def job(mock_create):
+    """A client whose job is submitted, completes at once and has two result rows."""
+    client = mock_create.client
+    client.submit_validate_job.return_value = SUBMITTED
+    client.submit_enrich_job.return_value = {**SUBMITTED, "type": "enrich"}
+    client.wait_for_job.return_value = COMPLETED
+    client.iter_job_results.return_value = ROWS
+    client.create = mock_create
+    return client
+
+
+class TestBulk:
+    def test_validate_file_submits_job_and_prints_rows(self, runner, job, places_file):
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 0
+        assert json_lines(result.stdout) == ROWS
+        assert "Submitted job b-1 (2 places)." in result.stderr
+        job.submit_validate_job.assert_called_once_with(PLACES)
+        assert job.wait_for_job.call_args.args == ("b-1",)
+        job.iter_job_results.assert_called_once_with("b-1")
+        job.validate.assert_not_called()
+
+    def test_enrich_file_applies_flags_to_every_row(self, runner, job, places_file):
+        result = runner.invoke(cli, [
+            "enrich", "--file", places_file, "--attr", "phone", "--research", "seating=Outdoor seating?",
+            "--summary", "--max-credits", "3",
+        ])
+        assert result.exit_code == 0
+        assert json_lines(result.stdout) == ROWS
+        pois = job.submit_enrich_job.call_args.args[0]
+        extras = {
+            "attributes": ["phone", {"name": "seating", "description": "Outdoor seating?"}],
+            "include_summary": True,
+            "max_credits": 3,
+        }
+        assert pois == [{**place, **extras} for place in PLACES]
+        job.submit_validate_job.assert_not_called()
+        job.enrich.assert_not_called()
+
+    def test_enrich_file_without_flags_sends_the_places_alone(self, runner, job, places_file):
+        result = runner.invoke(cli, ["enrich", "--file", places_file])
+        assert result.exit_code == 0
+        job.submit_enrich_job.assert_called_once_with(PLACES)
+
+    def test_enrich_file_max_credits_zero_is_sent(self, runner, job, places_file):
+        runner.invoke(cli, ["enrich", "--file", places_file, "--max-credits", "0"])
+        assert all(poi["max_credits"] == 0 for poi in job.submit_enrich_job.call_args.args[0])
+
+    def test_enrich_file_attr_typo_rejected(self, runner, job, places_file):
+        result = runner.invoke(cli, ["enrich", "--file", places_file, "--attr", "webiste"])
+        assert result.exit_code == 2
+        job.submit_enrich_job.assert_not_called()
+
+    @pytest.mark.parametrize("command", ["validate", "enrich"])
+    def test_file_and_name_conflict(self, runner, job, places_file, command):
+        result = runner.invoke(cli, [command, "Cafe Roma", "--file", places_file])
+        assert result.exit_code == 2
+        assert "--file" in result.output
+        job.create.assert_not_called()
+
+    @pytest.mark.parametrize("option", [
+        ["--country", "US"], ["--lat", "1", "--lng", "2"], ["--id", "p-1"],
+    ])
+    def test_file_refuses_single_place_options(self, runner, job, places_file, option):
+        result = runner.invoke(cli, ["validate", "--file", places_file, *option])
+        assert result.exit_code == 2
+        assert "CSV" in result.output
+        job.create.assert_not_called()
+
+    def test_estimate_with_file_refused(self, runner, job, places_file):
+        result = runner.invoke(cli, ["enrich", "--file", places_file, "--estimate"])
+        assert result.exit_code == 2
+        assert "voygr pricing" in result.output
+        job.create.assert_not_called()
+        job.submit_enrich_job.assert_not_called()
+
+    @pytest.mark.parametrize("command", ["validate", "enrich"])
+    def test_no_wait_without_file_refused(self, runner, mock_client, command):
+        result = runner.invoke(cli, [command, "Cafe Roma", "--no-wait"])
+        assert result.exit_code == 2
+        assert "--file" in result.output
+        getattr(mock_client, command).assert_not_called()
+
+    def test_csv_error_exit_2_nothing_submitted(self, runner, job, tmp_path):
+        bad = tmp_path / "bad.csv"
+        bad.write_text("name,latitude,longitude\nA,1,1\nB,95,1\n", encoding="utf-8")
+        result = runner.invoke(cli, ["validate", "--file", str(bad)])
+        assert result.exit_code == 2
+        assert "line 3:" in result.output
+        assert "latitude" in result.output
+        job.create.assert_not_called()
+        job.submit_validate_job.assert_not_called()
+
+    def test_missing_file_exit_2(self, runner, job, tmp_path):
+        result = runner.invoke(cli, ["validate", "--file", str(tmp_path / "nope.csv")])
+        assert result.exit_code == 2
+        job.create.assert_not_called()
+
+    def test_directory_as_file_exit_2(self, runner, job, tmp_path):
+        result = runner.invoke(cli, ["validate", "--file", str(tmp_path)])
+        assert result.exit_code == 2
+        job.create.assert_not_called()
+
+    def test_no_wait_prints_submit_response(self, runner, job, places_file):
+        result = runner.invoke(cli, ["validate", "--file", places_file, "--no-wait"])
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == SUBMITTED
+        assert "Submitted job b-1 (2 places)." in result.stderr
+        job.wait_for_job.assert_not_called()
+        job.iter_job_results.assert_not_called()
+
+    def test_one_place_job_message_is_singular(self, runner, job, tmp_path):
+        path = tmp_path / "one.csv"
+        path.write_text("name\nTartine Bakery\n", encoding="utf-8")
+        job.submit_validate_job.return_value = {**SUBMITTED, "total_items": 1}
+        result = runner.invoke(cli, ["validate", "--file", str(path), "--no-wait"])
+        assert result.exit_code == 0
+        assert "Submitted job b-1 (1 place)." in result.stderr
+
+    def test_enrich_no_wait_prints_submit_response(self, runner, job, places_file):
+        result = runner.invoke(cli, ["enrich", "--file", places_file, "--no-wait"])
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["type"] == "enrich"
+        job.wait_for_job.assert_not_called()
+
+    def test_no_wait_human_output_names_the_job(self, runner, job, places_file):
+        result = runner.invoke(cli, ["--human", "validate", "--file", places_file, "--no-wait"],
+                               env={"NO_COLOR": "1"})
+        assert result.exit_code == 0
+        assert result.stdout == "Job b-1: queued\n"
+
+    def test_ctrl_c_while_waiting(self, runner, job, places_file):
+        job.wait_for_job.side_effect = KeyboardInterrupt
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 130
+        assert STOPPED_WAITING in result.stderr
+        assert result.stdout == ""
+        job.cancel_job.assert_not_called()
+        job.iter_job_results.assert_not_called()
+
+    def test_failed_job_prints_rows_then_exit_1(self, runner, job, places_file):
+        job.wait_for_job.return_value = {
+            **COMPLETED, "status": "failed", "error": "Out of credits", "error_code": "QUOTA_EXCEEDED",
+        }
+        job.iter_job_results.return_value = ROWS[:1]
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS[:1]
+        assert json.loads(result.stderr.splitlines()[-1]) == {
+            "error": "QUOTA_EXCEEDED", "message": "Out of credits",
+        }
+
+    def test_failed_job_without_details_gets_a_default_error(self, runner, job, places_file):
+        job.wait_for_job.return_value = {**COMPLETED, "status": "failed"}
+        job.iter_job_results.return_value = []
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert json.loads(result.stderr.splitlines()[-1]) == {
+            "error": "JOB_FAILED", "message": "Job b-1 failed.",
+        }
+
+    def test_cancelled_job_exit_1(self, runner, job, places_file):
+        job.wait_for_job.return_value = {**COMPLETED, "status": "cancelled"}
+        job.iter_job_results.return_value = ROWS[:1]
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS[:1]
+        assert json.loads(result.stderr.splitlines()[-1]) == {
+            "error": "JOB_CANCELLED", "message": "Job b-1 was cancelled.",
+        }
+
+    def test_failed_job_human_mode(self, runner, job, places_file):
+        job.wait_for_job.return_value = {**COMPLETED, "status": "failed", "error": "Out of credits"}
+        result = runner.invoke(cli, ["--human", "validate", "--file", places_file], env={"NO_COLOR": "1"})
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS
+        assert result.stderr.endswith("Error: Out of credits\n")
+
+    def test_completed_with_failed_rows_exit_0(self, runner, job, places_file):
+        failed_row = {"id": None, "success": False, "error": "Could not resolve", "error_code": "NOT_FOUND"}
+        job.wait_for_job.return_value = {**COMPLETED, "progress": {"processed": 2, "succeeded": 1, "failed": 1}}
+        job.iter_job_results.return_value = [ROWS[0], failed_row]
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 0
+        assert json_lines(result.stdout) == [ROWS[0], failed_row]
+        assert result.stderr == "Submitted job b-1 (2 places).\n"
+
+    def test_rows_are_json_lines_in_human_mode_too(self, runner, job, places_file):
+        result = runner.invoke(cli, ["--human", "validate", "--file", places_file])
+        assert result.exit_code == 0
+        assert json_lines(result.stdout) == ROWS
+
+    def test_rows_keep_unicode(self, runner, job, places_file):
+        job.iter_job_results.return_value = [{"id": "Café Zürich"}]
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.stdout == '{"id": "Café Zürich"}\n'
+
+    def test_submit_api_error_exit_1(self, runner, job, places_file):
+        job.submit_validate_job.side_effect = APIError(
+            "INSUFFICIENT_CREDITS: Not enough credits", status_code=402, error_code="INSUFFICIENT_CREDITS",
+        )
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"] == "INSUFFICIENT_CREDITS"
+        assert result.stdout == ""
+        job.wait_for_job.assert_not_called()
+
+    def test_polling_error_exit_1_names_the_job_still_on_the_server(self, runner, job, places_file):
+        job.wait_for_job.side_effect = APIError("Request timed out")
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        error, hint = result.stderr.splitlines()[-2:]
+        assert json.loads(error) == {"error": "CLIENT_ERROR", "message": "Request timed out"}
+        assert hint == STILL_ON_SERVER
+        job.cancel_job.assert_not_called()
+        job.iter_job_results.assert_not_called()
+
+    def test_polling_error_in_human_mode(self, runner, job, places_file):
+        job.wait_for_job.side_effect = APIError("Request timed out")
+        result = runner.invoke(cli, ["--human", "validate", "--file", places_file], env={"NO_COLOR": "1"})
+        assert result.exit_code == 1
+        assert result.stderr.endswith("Error: Request timed out\n" + STILL_ON_SERVER + "\n")
+
+    def test_polling_error_ends_the_progress_line_first(self, runner, job, places_file):
+        def wait(batch_id, on_progress):
+            on_progress({"total_items": 2, "progress": {"processed": 1}})
+            raise APIError("Request timed out")
+
+        job.wait_for_job.side_effect = wait
+        with patch("voygr.cli.sys") as fake_sys:
+            fake_sys.stderr.isatty.return_value = True
+            result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert "\r1/2\n{" in result.stderr
+        assert result.stderr.endswith(STILL_ON_SERVER + "\n")
+
+    def test_download_error_exit_1_after_earlier_rows(self, runner, job, places_file):
+        def rows():
+            yield ROWS[0]
+            raise APIError("Result download link expired. Poll the job again for a fresh link.")
+
+        job.iter_job_results.return_value = rows()
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS[:1]
+        error, hint = result.stderr.splitlines()[-2:]
+        assert json.loads(error)["message"] == "Result download link expired. Poll the job again for a fresh link."
+        assert hint == STILL_ON_SERVER
+        job.cancel_job.assert_not_called()
+
+    def test_download_error_before_any_row_still_names_the_job(self, runner, job, places_file):
+        job.iter_job_results.side_effect = APIError("Request failed: boom")
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr.endswith(STILL_ON_SERVER + "\n")
+
+    def test_no_progress_line_when_stderr_is_not_a_terminal(self, runner, job, places_file):
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert job.wait_for_job.call_args.kwargs["on_progress"] is None
+        assert "\r" not in result.stderr
+
+    def test_progress_line_on_a_terminal(self, runner, job, places_file):
+        def wait(batch_id, on_progress):
+            for processed in (0, 1, 2):
+                on_progress({"total_items": 2, "progress": {"processed": processed}})
+            return COMPLETED
+
+        job.wait_for_job.side_effect = wait
+        with patch("voygr.cli.sys") as fake_sys:
+            fake_sys.stderr.isatty.return_value = True
+            result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 0
+        assert result.stderr == "Submitted job b-1 (2 places).\n\r0/2\r1/2\r2/2\n"
+
+    def test_progress_line_is_ended_before_the_ctrl_c_message(self, runner, job, places_file):
+        def wait(batch_id, on_progress):
+            on_progress({"total_items": 2, "progress": {"processed": 1}})
+            raise KeyboardInterrupt
+
+        job.wait_for_job.side_effect = wait
+        with patch("voygr.cli.sys") as fake_sys:
+            fake_sys.stderr.isatty.return_value = True
+            result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 130
+        assert result.stderr.endswith("\r1/2\n" + STOPPED_WAITING)
+
+    def test_progress_line_before_the_first_count(self, runner, job, places_file):
+        def wait(batch_id, on_progress):
+            on_progress({"status": "queued"})
+            return COMPLETED
+
+        job.wait_for_job.side_effect = wait
+        with patch("voygr.cli.sys") as fake_sys:
+            fake_sys.stderr.isatty.return_value = True
+            result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert "\r0/?" in result.stderr
+
+    def test_file_mode_uses_resolved_key(self, runner, job, places_file):
+        runner.invoke(cli, ["--api-key", "pk_live_flag", "validate", "--file", places_file])
+        assert job.create.call_args.kwargs["api_key"] == "pk_live_flag"
+
+
+class TestJobsCommands:
+    def test_jobs_status_cancel_results(self, runner, mock_client):
+        mock_client.get_job.return_value = COMPLETED
+        mock_client.cancel_job.return_value = {**COMPLETED, "status": "cancelled"}
+        mock_client.wait_for_job.return_value = COMPLETED
+        mock_client.iter_job_results.return_value = ROWS
+
+        status = runner.invoke(cli, ["jobs", "status", "b-1"])
+        assert status.exit_code == 0
+        assert json.loads(status.stdout) == COMPLETED
+        mock_client.get_job.assert_called_once_with("b-1")
+
+        cancel = runner.invoke(cli, ["jobs", "cancel", "b-1"])
+        assert cancel.exit_code == 0
+        assert json.loads(cancel.stdout)["status"] == "cancelled"
+        mock_client.cancel_job.assert_called_once_with("b-1")
+
+        results = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert results.exit_code == 0
+        assert json_lines(results.stdout) == ROWS
+        assert mock_client.wait_for_job.call_args.args == ("b-1",)
+        mock_client.iter_job_results.assert_called_once_with("b-1")
+
+    def test_jobs_status_does_not_wait_or_download(self, runner, mock_client):
+        mock_client.get_job.return_value = {**COMPLETED, "status": "running"}
+        runner.invoke(cli, ["jobs", "status", "b-1"])
+        mock_client.wait_for_job.assert_not_called()
+        mock_client.iter_job_results.assert_not_called()
+
+    def test_jobs_status_human(self, runner, mock_client):
+        mock_client.get_job.return_value = COMPLETED
+        result = runner.invoke(cli, ["--human", "jobs", "status", "b-1"], env={"NO_COLOR": "1"})
+        assert result.exit_code == 0
+        assert "Job b-1: completed" in result.stdout
+        assert "Progress: 2/2, 0 failed" in result.stdout
+
+    def test_jobs_cancel_human(self, runner, mock_client):
+        mock_client.cancel_job.return_value = {**COMPLETED, "status": "cancelled"}
+        result = runner.invoke(cli, ["--human", "jobs", "cancel", "b-1"], env={"NO_COLOR": "1"})
+        assert result.exit_code == 0
+        assert "Job b-1: cancelled" in result.stdout
+        assert "Rows already processed stay billed and downloadable." in result.stdout
+
+    def test_jobs_results_waits_for_a_running_job(self, runner, mock_client):
+        mock_client.wait_for_job.return_value = COMPLETED
+        mock_client.iter_job_results.return_value = ROWS
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 0
+        assert result.stderr == ""
+        assert mock_client.wait_for_job.call_args.kwargs["on_progress"] is None
+
+    def test_jobs_results_ctrl_c(self, runner, mock_client):
+        mock_client.wait_for_job.side_effect = KeyboardInterrupt
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 130
+        assert STOPPED_WAITING in result.stderr
+        mock_client.cancel_job.assert_not_called()
+
+    def test_jobs_results_of_a_failed_job_prints_rows_then_exit_1(self, runner, mock_client):
+        mock_client.wait_for_job.return_value = {
+            **COMPLETED, "status": "failed", "error": "Out of credits", "error_code": "QUOTA_EXCEEDED",
+        }
+        mock_client.iter_job_results.return_value = ROWS[:1]
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS[:1]
+        assert json.loads(result.stderr) == {"error": "QUOTA_EXCEEDED", "message": "Out of credits"}
+
+    def test_jobs_results_of_a_cancelled_job_exit_1(self, runner, mock_client):
+        mock_client.wait_for_job.return_value = {**COMPLETED, "status": "cancelled"}
+        mock_client.iter_job_results.return_value = []
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"] == "JOB_CANCELLED"
+
+    @pytest.mark.parametrize("subcommand,method", [("status", "get_job"), ("cancel", "cancel_job")])
+    def test_api_error_exit_1(self, runner, mock_client, subcommand, method):
+        getattr(mock_client, method).side_effect = APIError(
+            "NOT_FOUND: No such job", status_code=404, error_code="NOT_FOUND",
+        )
+        result = runner.invoke(cli, ["jobs", subcommand, "b-9"])
+        assert result.exit_code == 1
+        assert json.loads(result.stderr) == {"error": "NOT_FOUND", "message": "NOT_FOUND: No such job"}
+        assert result.stdout == ""
+
+    def test_results_api_error_exit_1(self, runner, mock_client):
+        mock_client.wait_for_job.side_effect = APIError(
+            "NOT_FOUND: No such job", status_code=404, error_code="NOT_FOUND",
+        )
+        result = runner.invoke(cli, ["jobs", "results", "b-9"])
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"] == "NOT_FOUND"
+
+    def test_results_of_an_unknown_job_does_not_claim_it_is_on_the_server(self, runner, mock_client):
+        mock_client.wait_for_job.side_effect = APIError(
+            "NOT_FOUND: No such job", status_code=404, error_code="NOT_FOUND",
+        )
+        result = runner.invoke(cli, ["jobs", "results", "b-9"])
+        assert "still on the server" not in result.stderr
+
+    def test_results_polling_error_names_the_job_still_on_the_server(self, runner, mock_client):
+        mock_client.wait_for_job.side_effect = APIError("Request timed out")
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        error, hint = result.stderr.splitlines()
+        assert json.loads(error) == {"error": "CLIENT_ERROR", "message": "Request timed out"}
+        assert hint == STILL_ON_SERVER
+        mock_client.cancel_job.assert_not_called()
+
+    def test_results_download_error_prints_earlier_rows_then_the_hint(self, runner, mock_client):
+        def rows():
+            yield ROWS[0]
+            raise APIError("Result file failed its checksum. Poll the job again for a fresh link.")
+
+        mock_client.wait_for_job.return_value = COMPLETED
+        mock_client.iter_job_results.return_value = rows()
+        result = runner.invoke(cli, ["jobs", "results", "b-1"])
+        assert result.exit_code == 1
+        assert json_lines(result.stdout) == ROWS[:1]
+        assert result.stderr.splitlines()[-1] == STILL_ON_SERVER
+        assert "Run the command again" not in result.stderr
+
+    @pytest.mark.parametrize("subcommand", ["status", "results", "cancel"])
+    def test_batch_id_required(self, runner, mock_client, subcommand):
+        result = runner.invoke(cli, ["jobs", subcommand])
+        assert result.exit_code == 2
+
+    @pytest.mark.parametrize("subcommand", ["status", "results", "cancel"])
+    def test_without_key_exit_1(self, runner, subcommand):
+        result = runner.invoke(cli, ["jobs", subcommand, "b-1"])
+        assert result.exit_code == 1
+        assert "No API key configured" in json.loads(result.stderr.splitlines()[0])["message"]
+
+    def test_jobs_help_lists_subcommands(self, runner):
+        result = runner.invoke(cli, ["jobs", "--help"])
+        assert result.exit_code == 0
+        for name in ("status", "results", "cancel"):
+            assert name in result.output
 
 
 class TestRemovedCommands:
