@@ -215,7 +215,7 @@ def _place_options(command):
 @click.version_option(version=__version__, prog_name="voygr")
 @click.pass_context
 def cli(ctx, api_key, base_url, human, debug):
-    """Voygr Business Validation API client."""
+    """Voygr Places API client."""
     ctx.ensure_object(dict)
     ctx.obj["api_key"] = api_key
     ctx.obj["base_url"] = base_url

@@ -1119,8 +1119,7 @@ class TestVersion:
     def test_version_flag(self, runner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        from voygr import __version__
-        assert __version__ in result.output
+        assert "0.4.0" in result.output
         assert "voygr" in result.output.lower()
 
 
