@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import uuid
 from contextlib import contextmanager
 
 import click
@@ -106,13 +107,15 @@ def place_fields(address, country, lat, lng, place_id) -> dict:
     })
 
 
-def _bulk_places(name, country, lat, lng, place_id, input_file, no_wait) -> list[dict] | None:
+def _bulk_places(name, country, lat, lng, place_id, input_file, no_wait, idempotency_key) -> list[dict] | None:
     """The places of a --file run, or None for a single-place run. A mix that fits neither is a usage error."""
     if input_file is None:
         if name is None:
             raise click.UsageError("Give a NAME, or --file PATH for a CSV of places.")
         if no_wait:
             raise click.UsageError("--no-wait only applies with --file.")
+        if idempotency_key is not None:
+            raise click.UsageError("--idempotency-key only applies with --file.")
         return None
     if name is not None:
         raise click.UsageError("Give a NAME or --file, not both.")
@@ -176,9 +179,21 @@ def _finish_job(ctx, client, batch_id: str) -> None:
         ctx.exit(1)
 
 
-def _run_job(ctx, client, submit, pois: list[dict], no_wait: bool) -> None:
-    """Submit one job and, unless `no_wait`, wait for it and print its rows."""
-    submitted = submit(pois)
+def _run_job(ctx, client, submit, pois: list[dict], no_wait: bool, idempotency_key: str | None) -> None:
+    """Submit one job and, unless `no_wait`, wait for it and print its rows.
+
+    The key is fixed before the first attempt. If the submit fails without a clear answer, the job may exist, so
+    the error names the key: re-running with it replays that job instead of paying for a second one.
+    """
+    key = idempotency_key or str(uuid.uuid4())
+    try:
+        submitted = submit(pois, idempotency_key=key)
+    except APIError as e:
+        error_output(e, ctx)
+        if e.status_code is None or e.status_code >= 500:
+            click.echo("The job may have been created. To retry without creating a second one, "
+                       f"run the same command with --idempotency-key {key}", err=True)
+        ctx.exit(1)
     batch_id = submitted["batch_id"]
     count = submitted.get("total_items", len(pois))
     click.echo(f"Submitted job {batch_id} ({count} {'place' if count == 1 else 'places'}).", err=True)
@@ -202,6 +217,9 @@ def _place_options(command):
                           "address, country, latitude, longitude, id."),
         click.option("--no-wait", is_flag=True, default=False,
                      help="With --file, print the job and exit instead of waiting for the results."),
+        click.option("--idempotency-key", default=None, metavar="KEY",
+                     help="With --file, the key of a submit that may have failed. The same command and key "
+                          "replay that job instead of creating a second one."),
     )):
         command = decorator(command)
     return command
@@ -267,12 +285,12 @@ def logout(ctx):
 @cli.command()
 @_place_options
 @click.pass_context
-def validate(ctx, name, address, country, lat, lng, place_id, input_file, no_wait):
+def validate(ctx, name, address, country, lat, lng, place_id, input_file, no_wait, idempotency_key):
     """Check that a place exists and whether it is open. With --file, check a CSV of places as one job."""
-    places = _bulk_places(name, country, lat, lng, place_id, input_file, no_wait)
+    places = _bulk_places(name, country, lat, lng, place_id, input_file, no_wait, idempotency_key)
     if places is not None:
         with api_session(ctx) as client:
-            _run_job(ctx, client, client.submit_validate_job, places, no_wait)
+            _run_job(ctx, client, client.submit_validate_job, places, no_wait, idempotency_key)
         return
     fields = place_fields(address, country, lat, lng, place_id)
     with api_session(ctx) as client:
@@ -291,7 +309,7 @@ def validate(ctx, name, address, country, lat, lng, place_id, input_file, no_wai
               help="Refuse a place that would cost more than this many credits. The cap is per place; "
                    "with --file, it is per row.")
 @click.pass_context
-def enrich(ctx, name, address, country, lat, lng, place_id, input_file, no_wait,
+def enrich(ctx, name, address, country, lat, lng, place_id, input_file, no_wait, idempotency_key,
            attrs, research, summary, estimate, max_credits):
     """Look up contact details, opening hours and research answers for a place.
 
@@ -301,7 +319,7 @@ def enrich(ctx, name, address, country, lat, lng, place_id, input_file, no_wait,
         raise click.UsageError(
             "--estimate prices a single place, so it cannot be used with --file. The per-place rates: voygr pricing"
         )
-    places = _bulk_places(name, country, lat, lng, place_id, input_file, no_wait)
+    places = _bulk_places(name, country, lat, lng, place_id, input_file, no_wait, idempotency_key)
     options = _drop_none({
         "estimate_only": estimate or None,
         "include_summary": summary or None,
@@ -311,7 +329,8 @@ def enrich(ctx, name, address, country, lat, lng, place_id, input_file, no_wait,
     if places is not None:
         row_options = _drop_none({"attributes": attributes, **options})
         with api_session(ctx) as client:
-            _run_job(ctx, client, client.submit_enrich_job, [{**place, **row_options} for place in places], no_wait)
+            _run_job(ctx, client, client.submit_enrich_job, [{**place, **row_options} for place in places], no_wait,
+                     idempotency_key)
         return
     fields = place_fields(address, country, lat, lng, place_id)
     with api_session(ctx) as client:

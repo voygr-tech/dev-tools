@@ -1181,15 +1181,48 @@ class TestWaitForJob:
         seen = []
         with pytest.raises(TimeoutError, match="b-1"):
             make_client(handler).wait_for_job("b-1", timeout=10, on_progress=seen.append)
-        assert len(handler.calls) == 3
-        assert len(seen) == 3
+        # Polls at 0 and 5; the deadline at 10 passes before a third poll starts.
+        assert len(handler.calls) == 2
+        assert len(seen) == 2
+        assert now[0] == 110.0
 
     def test_wait_timeout_still_returns_a_job_that_finishes_on_the_last_poll(self, mock_sleep, monkeypatch):
         now = [0.0]
         monkeypatch.setattr(time, "monotonic", lambda: now[0])
         mock_sleep.side_effect = lambda seconds: now.__setitem__(0, now[0] + seconds)
-        handler = scripted((200, job_status("running")), (200, job_status("running")), (200, job_status("completed")))
+        handler = scripted((200, job_status("running")), (200, job_status("completed")))
         assert make_client(handler).wait_for_job("b-1", timeout=10)["status"] == "completed"
+
+    def test_wait_short_timeout_caps_the_sleep(self, mock_sleep, monkeypatch):
+        now = [0.0]
+        monkeypatch.setattr(time, "monotonic", lambda: now[0])
+        mock_sleep.side_effect = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        handler = scripted((200, job_status("running")))
+        with pytest.raises(TimeoutError):
+            make_client(handler).wait_for_job("b-1", timeout=1)
+        assert mock_sleep.call_args_list == [call(1.0)]
+        assert len(handler.calls) == 1
+
+    def test_wait_caps_each_poll_request_to_the_time_left(self, mock_sleep, monkeypatch):
+        now = [0.0]
+        monkeypatch.setattr(time, "monotonic", lambda: now[0])
+        mock_sleep.side_effect = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        handler = scripted((200, job_status("running")), (200, job_status("completed")))
+        make_client(handler).wait_for_job("b-1", timeout=30)
+        assert [r.extensions["timeout"]["read"] for r in handler.calls] == [30.0, 25.0]
+
+    def test_wait_zero_timeout_polls_once_then_times_out(self, mock_sleep, monkeypatch):
+        monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+        handler = scripted((200, job_status("running")))
+        with pytest.raises(TimeoutError):
+            make_client(handler).wait_for_job("b-1", timeout=0)
+        assert len(handler.calls) == 1
+        assert handler.calls[0].extensions["timeout"]["read"] == 90.0
+
+    def test_wait_without_timeout_uses_the_default_request_timeout(self, mock_sleep):
+        handler = scripted((200, job_status("completed")))
+        make_client(handler).wait_for_job("b-1")
+        assert handler.calls[0].extensions["timeout"]["read"] == 90.0
 
     def test_wait_without_timeout_keeps_polling(self, mock_sleep, monkeypatch):
         now = [0.0]

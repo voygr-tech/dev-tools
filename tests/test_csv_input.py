@@ -194,3 +194,16 @@ def test_csv_syntax_error_reports_line(write_csv):
     # The csv module refuses a single field over 131,072 characters.
     message = read_error(write_csv("name\nA\n" + "x" * 200_000 + "\n"))
     assert message.startswith("line 3:")
+
+
+def test_duplicate_column_after_normalising_is_refused(write_csv):
+    assert read_error(write_csv("name,address,Address\nCafe,1 Main St,2 High St\n")).startswith("line 1:")
+    assert "address" in read_error(write_csv("name,address, ADDRESS\nCafe,1 Main St,2 High St\n"))
+
+
+def test_duplicate_name_column_is_refused(write_csv):
+    assert read_error(write_csv("Name,name\nCafe,Bar\n")).startswith("line 1:")
+
+
+def test_duplicate_unknown_columns_are_ignored(write_csv):
+    assert read_places(write_csv("name,notes,Notes\nCafe,a,b\n")) == [{"poi_name": "Cafe"}]

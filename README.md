@@ -76,7 +76,7 @@ Available: 2487 credits
 
 ## Bulk with a CSV
 
-The CSV needs a header row with a `name` column. `address`, `country`, `latitude`, `longitude` and `id` are optional. The CLI ignores other columns.
+The CSV needs a header row with a `name` column. `address`, `country`, `latitude`, `longitude` and `id` are optional. The CLI ignores other columns. Column names match regardless of case and surrounding spaces, and the command stops if a column appears twice, such as `address` and `Address`.
 
 ```csv
 name,address,country,id
@@ -117,7 +117,8 @@ voygr enrich --file places.csv --attr phone --attr website
 
 - A job takes 1 to 10,000 places.
 - The CLI checks the file before it sends anything. An empty name, a latitude without a longitude, a coordinate that isn't a number, or more than 10,000 rows stops the command with exit code 2 and the line number, and you pay nothing.
-- A retried submit sends the same `Idempotency-Key`, so a retry can't start a second job.
+- A retried submit sends the same `Idempotency-Key`, so a retry replays the same job.
+- If a submit fails without a clear answer, the job may still exist. The error then gives a key. Run the same command with `--idempotency-key KEY` to replay that job instead of paying for a second one.
 - `--no-wait` prints the submitted job and exits. Fetch the rows later with `voygr jobs results BATCH_ID`.
 - Ctrl-C stops waiting and leaves the job running. The CLI prints the `jobs results` and `jobs cancel` commands for it and exits 130.
 - For a failed or cancelled job, the CLI prints the rows it processed, then exits 1.
@@ -199,7 +200,7 @@ The CLI waits up to 3,700 seconds for an enrich request with a research field, a
 | `--research NAME[=DESCRIPTION]` | A research field. Repeat for several. |
 | `--summary` | Also return a short summary of the place. |
 | `--estimate` | Print the estimated cost. Nothing runs and nothing is charged. |
-| `--max-credits N` | Refuse the request if it would cost more than N credits. |
+| `--max-credits N` | Refuse a place that would cost more than N credits. With `--file`, the limit applies to each row. |
 
 ### Global options
 
@@ -392,7 +393,7 @@ The constructor is `Client(api_key=None, base_url="https://api.voygr.tech", debu
 | `submit_enrich_job(pois, *, idempotency_key=None)` | `POST /v1/jobs/enrich`, the same way. |
 | `get_job(batch_id)` | `GET /v1/jobs/{batch_id}` |
 | `cancel_job(batch_id)` | `DELETE /v1/jobs/{batch_id}` |
-| `wait_for_job(batch_id, *, poll_interval=5.0, timeout=None, on_progress=None)` | Polls until the job is `completed`, `failed` or `cancelled` and returns that status. Raises `TimeoutError` after `timeout` seconds. |
+| `wait_for_job(batch_id, *, poll_interval=5.0, timeout=None, on_progress=None)` | Polls until the job is `completed`, `failed` or `cancelled` and returns that status. Raises `TimeoutError` after `timeout` seconds, and never starts a poll after that. |
 | `iter_job_results(batch_id)` | Downloads the result files and yields one row at a time, in input order. |
 | `usage()` | `GET /v1/usage` |
 | `pricing()` | `GET /v1/pricing` |

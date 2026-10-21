@@ -3,7 +3,7 @@ import json
 import click
 import httpx
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 from click.testing import CliRunner
 from voygr.cli import cli, parse_research, place_fields
 from voygr.client import APIError, Client, STANDARD_ATTRIBUTES
@@ -528,7 +528,7 @@ class TestBulk:
         assert result.exit_code == 0
         assert json_lines(result.stdout) == ROWS
         assert "Submitted job b-1 (2 places)." in result.stderr
-        job.submit_validate_job.assert_called_once_with(PLACES)
+        job.submit_validate_job.assert_called_once_with(PLACES, idempotency_key=ANY)
         assert job.wait_for_job.call_args.args == ("b-1",)
         job.iter_job_results.assert_called_once_with("b-1")
         job.validate.assert_not_called()
@@ -553,7 +553,7 @@ class TestBulk:
     def test_enrich_file_without_flags_sends_the_places_alone(self, runner, job, places_file):
         result = runner.invoke(cli, ["enrich", "--file", places_file])
         assert result.exit_code == 0
-        job.submit_enrich_job.assert_called_once_with(PLACES)
+        job.submit_enrich_job.assert_called_once_with(PLACES, idempotency_key=ANY)
 
     def test_enrich_file_max_credits_zero_is_sent(self, runner, job, places_file):
         runner.invoke(cli, ["enrich", "--file", places_file, "--max-credits", "0"])
@@ -1182,3 +1182,52 @@ class TestCompletions:
         result = runner.invoke(cli, ["completions"], env={"SHELL": "/bin/sh"})
         assert result.exit_code == 0
         assert "bash_source" in result.output
+
+
+class TestIdempotencyKey:
+    def test_file_submit_sends_a_generated_key(self, runner, job, places_file):
+        runner.invoke(cli, ["validate", "--file", places_file])
+        key = job.submit_validate_job.call_args.kwargs["idempotency_key"]
+        assert len(key) == 36 and key.count("-") == 4
+
+    def test_given_key_is_sent(self, runner, job, places_file):
+        result = runner.invoke(cli, ["enrich", "--file", places_file, "--idempotency-key", "k-1"])
+        assert result.exit_code == 0
+        assert job.submit_enrich_job.call_args.kwargs["idempotency_key"] == "k-1"
+
+    @pytest.mark.parametrize("error", [
+        APIError("Request timed out"),
+        APIError("UNKNOWN_ERROR: Bad Gateway", status_code=502, error_code="UNKNOWN_ERROR"),
+    ])
+    def test_uncertain_submit_prints_the_key_to_retry_with(self, runner, job, places_file, error):
+        job.submit_validate_job.side_effect = error
+        result = runner.invoke(cli, ["validate", "--file", places_file, "--idempotency-key", "k-9"])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr.splitlines()[-1] == (
+            "The job may have been created. To retry without creating a second one, "
+            "run the same command with --idempotency-key k-9"
+        )
+        job.wait_for_job.assert_not_called()
+
+    def test_uncertain_submit_hint_names_the_generated_key(self, runner, job, places_file):
+        job.submit_validate_job.side_effect = APIError("Request timed out")
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        key = job.submit_validate_job.call_args.kwargs["idempotency_key"]
+        assert result.stderr.splitlines()[-1].endswith(f"--idempotency-key {key}")
+
+    def test_rejected_submit_prints_no_retry_hint(self, runner, job, places_file):
+        job.submit_validate_job.side_effect = APIError(
+            "QUOTA_EXCEEDED: quota_exceeded (4 credits needed)", status_code=402, error_code="QUOTA_EXCEEDED",
+        )
+        result = runner.invoke(cli, ["validate", "--file", places_file])
+        assert result.exit_code == 1
+        assert "--idempotency-key" not in result.stderr
+
+    @pytest.mark.parametrize("command", ["validate", "enrich"])
+    def test_key_without_file_is_a_usage_error(self, runner, job, command):
+        result = runner.invoke(cli, [command, "Cafe", "--idempotency-key", "k-1"])
+        assert result.exit_code == 2
+        assert "--idempotency-key only applies with --file" in result.output
+        job.validate.assert_not_called()
+        job.enrich.assert_not_called()

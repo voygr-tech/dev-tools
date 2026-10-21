@@ -11,6 +11,7 @@ class CSVInputError(ValueError):
 
 # Column -> longest value the API accepts.
 _MAX_LENGTH = {"name": 200, "address": 500, "id": 100}
+_COLUMNS = ("name", "address", "country", "latitude", "longitude", "id")
 
 
 def _cell(row: dict, column: str) -> str:
@@ -75,6 +76,9 @@ def read_places(path: str | os.PathLike) -> list[dict]:
             if reader.fieldnames is None:
                 raise CSVInputError("line 1: the file is empty; it needs a header row with a name column")
             reader.fieldnames = [column.strip().lower() for column in reader.fieldnames]
+            repeated = sorted({c for c in reader.fieldnames if c in _COLUMNS and reader.fieldnames.count(c) > 1})
+            if repeated:  # DictReader would keep only the last one, so a row could be checked at the wrong place
+                raise CSVInputError(f"line 1: the header has more than one {', '.join(repeated)} column")
             if "name" not in reader.fieldnames:
                 raise CSVInputError("line 1: the header needs a name column")
             for row in reader:

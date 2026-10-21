@@ -315,18 +315,28 @@ class Client:
     ) -> dict:
         """Poll until the job reaches a terminal status and return that status.
 
-        Raises TimeoutError once `timeout` seconds have passed; the job keeps running on the server.
+        Raises TimeoutError once `timeout` seconds have passed; the job keeps running on the server. Sleeps and
+        poll requests are cut to the time left, and no poll starts after the deadline.
         """
         deadline = None if timeout is None else time.monotonic() + timeout
+        request_timeout = min(_DEFAULT_TIMEOUT, timeout) if timeout else _DEFAULT_TIMEOUT  # timeout=0 still polls once
         while True:
-            status = self.get_job(batch_id)
+            status = self._request(
+                "GET", f"/v1/jobs/{quote(batch_id, safe='')}", retry_on=_RETRYABLE, timeout=request_timeout
+            )
             if on_progress:
                 on_progress(status)
             if status.get("status") in TERMINAL_JOB_STATUSES:
                 return status
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f"Job {batch_id} did not finish within {timeout:g} seconds")
-            time.sleep(poll_interval)
+            pause = poll_interval
+            if deadline is not None:
+                pause = min(poll_interval, max(deadline - time.monotonic(), 0.0))
+            time.sleep(pause)
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError(f"Job {batch_id} did not finish within {timeout:g} seconds")
+                request_timeout = min(_DEFAULT_TIMEOUT, left)
 
     def iter_job_results(self, batch_id: str) -> Iterator[dict]:
         """Yield every result row of a job, file by file, in input order."""
