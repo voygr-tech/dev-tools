@@ -1,5 +1,12 @@
+import gzip
+import hashlib
+import json
 import sys
 import time
+import uuid
+import zlib
+from collections.abc import Callable, Iterator
+from urllib.parse import quote
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter, retry_if_exception_type
@@ -15,6 +22,9 @@ STANDARD_ATTRIBUTES = (
 # Per-call retry policy: single lookups retry on 429 only, reads and job calls on transient 5xx too.
 _RATE_LIMIT_ONLY = frozenset({429})
 _RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
+MAX_JOB_ROWS = 10_000
+TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 _DEFAULT_TIMEOUT = 90.0
 _RESEARCH_TIMEOUT = 3700.0
@@ -45,6 +55,13 @@ class _RetryableError(APIError):
                  retry_after: float | None = None):
         super().__init__(message, status_code=status_code, error_code=error_code)
         self.retry_after = retry_after
+
+
+class _ExpiredLink(APIError):
+    """A presigned result URL answered 403: the link has expired."""
+
+    def __init__(self):
+        super().__init__("Result download link expired. Poll the job again for a fresh link.", status_code=403)
 
 
 def _wait(retry_state) -> float:
@@ -112,6 +129,20 @@ def _is_research(attributes: list[str | dict] | None) -> bool:
     return any(isinstance(item, dict) or item not in STANDARD_ATTRIBUTES for item in attributes or [])
 
 
+def _result_files(status: dict) -> list[dict]:
+    return (status.get("results") or {}).get("files") or []
+
+
+def _decode_result_file(data: bytes, sha256: str) -> list[dict]:
+    if hashlib.sha256(data).hexdigest() != sha256.lower():
+        raise APIError("Result file failed its checksum. Poll the job again for a fresh link.")
+    try:
+        # ponytail: whole file in memory; stream with gzip.GzipFile if result files grow past ~100 MB
+        return [json.loads(line) for line in gzip.decompress(data).splitlines() if line.strip()]
+    except (OSError, EOFError, zlib.error, ValueError) as e:
+        raise APIError(f"Result file could not be read: {e}")
+
+
 class Client:
     def __init__(
         self,
@@ -132,34 +163,39 @@ class Client:
             raise APIError("No API key configured. Run 'voygr login <key>' or set VOYGR_API_KEY.")
         return self.api_key
 
-    def _request(
-        self, method: str, path: str, *, auth: bool = True, retry_on: frozenset[int], timeout: float, **httpx_kwargs
-    ) -> dict:
-        headers = dict(httpx_kwargs.pop("headers", {}))
-        if auth:
-            headers["X-API-Key"] = self._require_auth()
+    def _send(
+        self, method: str, url: str, *, headers: dict, retry_on: frozenset[int], timeout: float,
+        presigned: bool = False, retry_transport_errors: bool = False, **httpx_kwargs
+    ) -> httpx.Response:
+        """One HTTP call with the per-call retry policy. Returns the response or raises APIError.
 
-        url = f"{self.base_url}{path}"
+        With `presigned`, a 403 raises _ExpiredLink before the body is read: storage answers it with XML.
+        With `retry_transport_errors`, a timeout or connection error is retried too, for calls that are safe to replay.
+        """
+        shown = url.partition("?")[0]  # a presigned query is a credential; keep it out of debug output
+        transport_error = _RetryableError if retry_transport_errors else APIError
 
-        def do_request() -> dict:
+        def do_request() -> httpx.Response:
             start = time.monotonic()
             try:
                 response = self._http.request(method, url, headers=headers, timeout=timeout, **httpx_kwargs)
             except httpx.TimeoutException:
                 if self._debug:
                     elapsed = time.monotonic() - start
-                    print(f"DEBUG {method} {url} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
-                raise APIError("Request timed out")
+                    print(f"DEBUG {method} {shown} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
+                raise transport_error("Request timed out")
             except httpx.HTTPError as e:
                 if self._debug:
                     elapsed = time.monotonic() - start
-                    print(f"DEBUG {method} {url} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
-                raise APIError(f"Request failed: {e}")
+                    print(f"DEBUG {method} {shown} -> ERR ({elapsed:.3f}s)", file=sys.stderr)
+                raise transport_error(f"Request failed: {e}")
 
             if self._debug:
                 elapsed = time.monotonic() - start
-                print(f"DEBUG {method} {url} -> {response.status_code} ({elapsed:.3f}s)", file=sys.stderr)
+                print(f"DEBUG {method} {shown} -> {response.status_code} ({elapsed:.3f}s)", file=sys.stderr)
 
+            if presigned and response.status_code == 403:
+                raise _ExpiredLink()
             if response.status_code >= 400:
                 code, message = _error_code_and_message(response)
                 text = f"{code}: {message}"
@@ -168,11 +204,7 @@ class Client:
                         text, status_code=response.status_code, error_code=code, retry_after=_retry_after(response)
                     )
                 raise APIError(text, status_code=response.status_code, error_code=code)
-
-            try:
-                return response.json()
-            except ValueError:
-                raise APIError("Invalid JSON response from server")
+            return response
 
         if self._retries > 0:
             retrying = retry(
@@ -184,6 +216,27 @@ class Client:
             return retrying()
         else:
             return do_request()
+
+    def _request(
+        self, method: str, path: str, *, auth: bool = True, retry_on: frozenset[int], timeout: float,
+        retry_transport_errors: bool = False, **httpx_kwargs
+    ) -> dict:
+        headers = dict(httpx_kwargs.pop("headers", {}))
+        if auth:
+            headers["X-API-Key"] = self._require_auth()
+        response = self._send(
+            method, f"{self.base_url}{path}", headers=headers, retry_on=retry_on, timeout=timeout,
+            retry_transport_errors=retry_transport_errors, **httpx_kwargs
+        )
+        try:
+            return response.json()
+        except ValueError:
+            raise APIError("Invalid JSON response from server")
+
+    def _download(self, url: str) -> bytes:
+        """Fetch a presigned result URL. It carries its own credentials, so no API key goes along."""
+        response = self._send("GET", url, headers={}, retry_on=_RETRYABLE, timeout=_DEFAULT_TIMEOUT, presigned=True)
+        return response.content
 
     def close(self) -> None:
         self._http.close()
@@ -224,3 +277,68 @@ class Client:
 
     def pricing(self) -> dict:
         return self._request("GET", "/v1/pricing", auth=False, retry_on=_RETRYABLE, timeout=_DEFAULT_TIMEOUT)
+
+    def _submit_job(self, path: str, pois: list[dict], idempotency_key: str | None) -> dict:
+        if not 1 <= len(pois) <= MAX_JOB_ROWS:
+            raise ValueError(f"A job takes 1 to {MAX_JOB_ROWS:,} rows, got {len(pois):,}")
+        # Built once, so a retried submit replays as the same job instead of creating a second one.
+        # That makes a timeout safe to retry too: the first attempt may have created the job.
+        headers = {"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
+        return self._request(
+            "POST", path, retry_on=_RETRYABLE, timeout=_DEFAULT_TIMEOUT, headers=headers, json={"pois": pois},
+            retry_transport_errors=True,
+        )
+
+    def submit_validate_job(self, pois: list[dict], *, idempotency_key: str | None = None) -> dict:
+        return self._submit_job("/v1/jobs/validate", pois, idempotency_key)
+
+    def submit_enrich_job(self, pois: list[dict], *, idempotency_key: str | None = None) -> dict:
+        return self._submit_job("/v1/jobs/enrich", pois, idempotency_key)
+
+    def get_job(self, batch_id: str) -> dict:
+        return self._request(
+            "GET", f"/v1/jobs/{quote(batch_id, safe='')}", retry_on=_RETRYABLE, timeout=_DEFAULT_TIMEOUT
+        )
+
+    def cancel_job(self, batch_id: str) -> dict:
+        return self._request(
+            "DELETE", f"/v1/jobs/{quote(batch_id, safe='')}", retry_on=_RETRYABLE, timeout=_DEFAULT_TIMEOUT
+        )
+
+    def wait_for_job(
+        self,
+        batch_id: str,
+        *,
+        poll_interval: float = 5.0,
+        timeout: float | None = None,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> dict:
+        """Poll until the job reaches a terminal status and return that status.
+
+        Raises TimeoutError once `timeout` seconds have passed; the job keeps running on the server.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            status = self.get_job(batch_id)
+            if on_progress:
+                on_progress(status)
+            if status.get("status") in TERMINAL_JOB_STATUSES:
+                return status
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"Job {batch_id} did not finish within {timeout:g} seconds")
+            time.sleep(poll_interval)
+
+    def iter_job_results(self, batch_id: str) -> Iterator[dict]:
+        """Yield every result row of a job, file by file, in input order."""
+        files = _result_files(self.get_job(batch_id))
+        for index, file in enumerate(files):
+            try:
+                data = self._download(file["url"])
+            except _ExpiredLink:
+                # Presigned links last about 15 minutes; poll once for fresh ones. A second 403 propagates.
+                refreshed = _result_files(self.get_job(batch_id))
+                if index >= len(refreshed):
+                    raise
+                file = refreshed[index]
+                data = self._download(file["url"])
+            yield from _decode_result_file(data, file["sha256"])
