@@ -12,6 +12,17 @@ pip install voygr
 
 Needs Python 3.10 or newer.
 
+## Runnable examples
+
+Use the [examples collection](examples/) for complete scripts with CSV output
+and a phone-booking preview:
+
+- [Check which stores in a spreadsheet are closed](examples/check_closed_stores/).
+- [Enrich a small-business lead list with owners and contacts](examples/enrich_leads/).
+- [Have an AI agent book a table by phone](examples/book_table/).
+
+Each example has a setup command, sample input and recovery instructions.
+
 ## Quick start
 
 ### 1. Get a key
