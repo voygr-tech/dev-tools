@@ -160,3 +160,22 @@ def test_failed_job_releases_reserved_output(closed_command, example_api, exampl
     result = invoke(closed_command, example_files)
     assert result.exit_code == 1
     assert not example_files[1].exists()
+
+
+@pytest.mark.parametrize("header", ["id", " ID "])
+def test_long_customer_id_is_preserved_without_api_limits(closed_command, example_api, example_files, header):
+    customer_id = "customer-" + "x" * 1000
+    example_files[0].write_text(f"name,{header}\nFirst,{customer_id}\nCafé,{customer_id}\n", encoding="utf-8")
+    result = invoke(closed_command, example_files)
+    assert result.exit_code == 0, result.output
+    submitted = json.loads(example_api.requests[0].content)["pois"]
+    assert [p["id"] for p in submitted] == ["row-1", "row-2"]
+    with example_files[1].open(newline="", encoding="utf-8") as f:
+        assert [r[header] for r in csv.DictReader(f)] == [customer_id, customer_id]
+
+
+def test_id_only_row_is_invalid_before_submission(closed_command, example_api, example_files):
+    example_files[0].write_text("name,id\n,customer-1\nFirst,customer-2\n", encoding="utf-8")
+    result = invoke(closed_command, example_files)
+    assert result.exit_code != 0
+    assert example_api.requests == []

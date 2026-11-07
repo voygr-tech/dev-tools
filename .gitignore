@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 examples/**/*.csv
 examples/**/*.jsonl
+/*.csv
+/*.jsonl
+.voygr-calls/

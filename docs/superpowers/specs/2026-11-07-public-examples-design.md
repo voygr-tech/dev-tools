@@ -52,6 +52,8 @@ reject duplicate/empty headers, malformed rows and
 pre-existing reserved output columns. Use internal unique row IDs in job payloads;
 join results by those IDs, preserving original IDs and row order even when results
 arrive out of order. Refuse missing/duplicate/unknown result IDs or schema drift.
+Customer IDs remain output metadata; API validation sees generated row IDs, so
+the API's ID length limit does not constrain the preserved customer IDs.
 
 `examples/check_closed_stores/main.py` submits a validate job. Add columns
 `voygr_status`, `voygr_closure_reason`, `voygr_error`.
@@ -77,7 +79,7 @@ For completed jobs with failed rows, write all rows with errors and exit nonzero
 the Places SDK does not implement calling. Inputs: destination phone, restaurant
 name, reservation name, party size, local date/time with timezone, callback number.
 Validate phone syntax, positive party size and an explicit future date/time with
-UTC offset before any request. Build a brief containing every booking detail,
+UTC offset before any new booking. Build a brief containing every booking detail,
 no substitution without permission, no payment/deposit commitments and a request
 to read back the confirmed details. Do not claim the reservation succeeded merely
 because the API accepted the call.
@@ -91,6 +93,17 @@ result. This keeps the runnable example small and allows safe later reads. The
 README provides the MCP equivalent and links to the maintained PlaceCall agent
 instructions for interactive calls and mid-call questions.
 
+Before a confirmed submission, save its exact body, idempotency key and original
+UTC creation time to an ignored `.voygr-calls/` JSON file. Use exclusive creation
+and Unix owner-only permissions; never include the API credential. Fail before
+HTTP if saving fails. Normal repeats under an existing key must match its saved
+body. `--retry-request PATH` previews that saved body without HTTP; adding
+`--confirm-call` replays it, including after the reservation time passes. Reject
+booking/key overrides, malformed saved records and retries at/after 24 hours
+from the original timestamp. Never reset that timestamp on retry. New bookings
+retain the future-time check. A replay can place the call when the first request
+never reached the API, so the README explains checking account calls first.
+
 ## Verification
 
 Each new module has tests. Use real SDK/client behavior with `httpx.MockTransport`;
@@ -98,7 +111,9 @@ replace the network, not the business logic. Cover shuffled IDs, original-column
 preservation, errors and unknown status, malformed CSV, missing env keys, output
 collisions, response schema drift, idempotency and authorization headers, booking
 preview without network, invalid inputs and call readback without a second POST.
-Run the full existing unit and mocked integration suite with `python -m pytest`.
+Run the full existing unit and mocked integration suite with both `python -m pytest`
+and CI's bare `pytest` entry point and coverage flags. Configure pytest's project
+root import path so source examples need not ship inside the SDK package.
 The repository defines no separate linter/type checker or live integration command.
 Run compile checks, `git diff --check`, all three `--help` commands and the no-call
 booking preview. Do not perform live paid jobs or calls as verification.

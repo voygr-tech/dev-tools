@@ -18,7 +18,37 @@ Build: python -m pip wheel --no-deps . succeeded for voygr 0.4.0; no release/tag
 
 Public OpenAPI confirms flat POST /calls, GET /calls/{call_id}, and bulk enrichment rows accepting structured research attributes. Repository ruleset main: PR + 1 approval requires one approving GitHub review, with no bypass actors. The authenticated PR author is yamarkov and cannot self-approve. This remains a real merge requirement; settings and permissions were not changed.
 
-## Execution ledger
+## External review round 1
+
+Greptile scored head `945ec2521e6b84ecd45c31e6c729d48c13a52d50` 4/5:
+https://github.com/voygr-tech/dev-tools/pull/11#issuecomment-6710617503.
+Three valid findings: past-time call recovery was blocked, customer IDs were
+subject to an irrelevant API limit, and documented root CSV files were unignored.
+
+CI failed with 496 tests passing and 76 example setup errors (`ModuleNotFoundError:
+No module named examples`). The bare pytest executable does not add the working
+directory as python -m pytest does. Reproduced that exact import failure locally;
+pytest's configured pythonpath fixes both entry points without shipping examples
+in the SDK wheel or changing the CI workflow.
+
+Recovery tests failed before implementation, then passed with durable request
+receipts and an explicit saved-request replay mode. Tests cover replay after the
+booking time, unchanged body/key, private file/no API credential, the 24-hour
+cutoff, new-call future-time validation, no override options, local replay
+preview, key reuse conflicts, malformed files and failed receipt creation.
+Long customer ID regressions failed first, then passed with generated IDs in the
+API-only CSV snapshot. An ID-only row regression confirms invalid rows still stop
+before HTTP. git check-ignore initially missed all four documented root paths;
+the added root CSV/JSONL and recovery-directory patterns now match them.
+
+The follow-up changes API example behavior and pytest configuration, so it needs
+a new exact-head Greptile review. Batch all fixes into one push and reuse the
+automatic review. Richer API error diagnostics remain deferred. No paid jobs or
+real calls were used. Local verification after the fixes: 587 tests pass under
+both pytest entry points. The bare pytest invocation used CI's coverage options
+on Python 3.12.3. Compilation, diff checks and the wheel build pass.
+
+## Original execution ledger
 
 ```text
 # SDD ledger — plan: docs/superpowers/plans/2026-11-07-public-examples.md

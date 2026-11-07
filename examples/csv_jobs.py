@@ -37,12 +37,8 @@ def run_job(
             raise ValueError(f"Output already exists: {output_path}; choose a new path")
         if not output_path.parent.is_dir():
             raise ValueError(f"Output directory does not exist: {output_path.parent}")
-        # The SDK takes a path. Validate a private copy of the same bytes we preserve.
+        # Read one snapshot for validation and preservation, even if the source changes.
         snapshot = input_path.read_bytes()
-        with tempfile.TemporaryDirectory(prefix="voygr-csv-") as scratch:
-            snapshot_path = Path(scratch) / "input.csv"
-            snapshot_path.write_bytes(snapshot)
-            places = read_places(snapshot_path)
         with io.StringIO(snapshot.decode("utf-8-sig"), newline="") as source:
             reader = csv.DictReader(source, strict=True)
             headers = reader.fieldnames or []
@@ -58,6 +54,16 @@ def run_job(
                     raise ValueError(f"CSV line {reader.line_num}: row width differs from the header")
                 if any(value.strip() for value in row.values()):
                     originals.append(row)
+        # Customer IDs are output metadata. Only generated IDs need API validation.
+        with tempfile.TemporaryDirectory(prefix="voygr-csv-") as scratch:
+            snapshot_path = Path(scratch) / "input.csv"
+            api_headers = [h for h in headers if h.strip().lower() != "id"] + ["id"]
+            with snapshot_path.open("w", newline="", encoding="utf-8") as api_input:
+                writer = csv.DictWriter(api_input, fieldnames=api_headers, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows({**{h: row[h] for h in api_headers if h != "id"}, "id": f"row-{number}"}
+                                 for number, row in enumerate(originals, 1))
+            places = read_places(snapshot_path)
         for number, place in enumerate(places, 1):
             place["id"] = f"row-{number}"
             if attributes is not None:

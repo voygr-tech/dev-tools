@@ -51,6 +51,11 @@ opens with its default AI and recording notice. See the
 [calling guide](https://api.voygr.tech/docs/guides/place-a-call/) for supported
 destinations, billing and recording details.
 
+Before submitting, the script saves the request body, key and creation time in
+an ignored `.voygr-calls/` file. It keeps your API credential out of that file
+and uses owner-only file permissions on Unix. If it cannot save the request,
+it stops before calling the API. Keep the file local; it contains booking details.
+
 The script submits once and prints the `call_id`. An accepted or queued call
 does not mean the restaurant confirmed a reservation. Read the outcome with:
 
@@ -68,12 +73,26 @@ is `final`, or that `recording_declined` is true and no transcript will arrive.
 
 ## Recover an uncertain submission
 
-If the POST times out or returns an error, it may have placed the call. Within
-24 hours, retry only with the same idempotency key and identical booking details.
-The API replays the first call instead of dialing twice. After that window,
-check your account's calls before deciding whether another call is needed.
-If you have the `call_id`, use readback. Changing the key or the brief can create
-a second real call.
+If the POST times out or returns an error, it may have placed the call. The
+command prints the saved request path before sending HTTP. Use that file to
+preview a replay, then add `--confirm-call` after reviewing it:
+
+```sh
+python -m examples.book_table.main --retry-request SAVED_REQUEST_PATH
+python -m examples.book_table.main --retry-request SAVED_REQUEST_PATH --confirm-call
+```
+
+This sends the saved body and key, including after the requested booking time
+passes. Do not edit the file or add booking options or a different key. The
+script refuses replays at or after 24 hours from the file's original creation
+time; repeated attempts do not extend the window. New booking commands still
+require a future time.
+
+The API returns the original call when it has already accepted that key. A
+replay can place the call if the first request never reached the API, so inspect
+your account's calls when the outcome is uncertain. After the recovery window,
+check those calls before deciding whether another call is needed. If you have
+the `call_id`, use readback. Changing the key or brief can create a second call.
 
 ## Use an assistant over MCP
 

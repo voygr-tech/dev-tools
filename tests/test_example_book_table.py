@@ -13,9 +13,10 @@ BOOKING = ["--phone", "+14155550100", "--restaurant", "Example Bistro", "--name"
 
 
 @pytest.fixture
-def booking(monkeypatch):
+def booking(monkeypatch, tmp_path):
     assert Path("examples/book_table/main.py").is_file(), "Table booking example is missing"
     module = importlib.import_module("examples.book_table.main")
+    monkeypatch.chdir(tmp_path)
     for name in ("VOYGR_API_KEY", "PLACECALL_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     return module
@@ -142,3 +143,107 @@ def test_uncertain_failure_keeps_retry_key(booking, phone_api, monkeypatch, erro
     assert len(phone_api.requests) == 1
     assert "booking-001" in result.stderr
     assert "same" in result.stderr.lower()
+
+
+@pytest.fixture
+def booking_clock(booking, monkeypatch):
+    from datetime import datetime, timezone
+    current = [datetime(2099, 11, 9, 2, tzinfo=timezone.utc)]  # One hour before the booking.
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current[0].astimezone(tz)
+    monkeypatch.setattr(booking, "datetime", Clock)
+    return current
+
+
+def test_recovery_after_booking_time_replays_saved_request(booking, phone_api, booking_clock, monkeypatch, tmp_path):
+    from datetime import timedelta
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    phone_api.error = httpx.ReadTimeout("uncertain submission")
+    first = CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"])
+    assert first.exit_code == 1
+    receipts = list((tmp_path / ".voygr-calls").glob("*.json"))
+    assert len(receipts) == 1
+    record = json.loads(receipts[0].read_text())
+    assert record["body"] == json.loads(phone_api.requests[0].content)
+    assert record["idempotency_key"] == "booking-001"
+    assert "test-call-key" not in receipts[0].read_text()
+    assert receipts[0].stat().st_mode & 0o777 == 0o600
+
+    booking_clock[0] += timedelta(hours=2)
+    phone_api.error = None
+    new_call = CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "new-key"])
+    assert new_call.exit_code != 0
+    assert len(phone_api.requests) == 1  # New calls still require a future booking.
+    replay = CliRunner().invoke(booking.main, ["--retry-request", str(receipts[0]), "--confirm-call"])
+    assert replay.exit_code == 0, replay.output
+    assert len(phone_api.requests) == 2
+    assert phone_api.requests[1].content == phone_api.requests[0].content
+    assert phone_api.requests[1].headers["Idempotency-Key"] == "booking-001"
+
+
+def test_expired_recovery_never_posts(booking, phone_api, booking_clock, monkeypatch, tmp_path):
+    from datetime import timedelta
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    assert CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"]).exit_code == 0
+    receipt = next((tmp_path / ".voygr-calls").glob("*.json"))
+    booking_clock[0] += timedelta(hours=24)
+    result = CliRunner().invoke(booking.main, ["--retry-request", str(receipt), "--confirm-call"])
+    assert result.exit_code == 1
+    assert "24" in result.stderr
+    assert len(phone_api.requests) == 1
+
+
+def test_saved_retry_previews_without_a_key(booking, phone_api, booking_clock, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    assert CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"]).exit_code == 0
+    receipt = next((tmp_path / ".voygr-calls").glob("*.json"))
+    monkeypatch.delenv("PLACECALL_API_KEY")
+    preview = CliRunner().invoke(booking.main, ["--retry-request", str(receipt)])
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.stdout) == json.loads(phone_api.requests[0].content)
+    assert len(phone_api.requests) == 1
+
+
+@pytest.mark.parametrize("extra", [["--phone", "+14155550101"], ["--idempotency-key", "new-key"], ["--call-id", "call-example"]])
+def test_retry_cannot_override_saved_request(booking, phone_api, booking_clock, monkeypatch, tmp_path, extra):
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    assert CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"]).exit_code == 0
+    receipt = next((tmp_path / ".voygr-calls").glob("*.json"))
+    result = CliRunner().invoke(booking.main, ["--retry-request", str(receipt), "--confirm-call", *extra])
+    assert result.exit_code != 0
+    assert len(phone_api.requests) == 1
+
+
+def test_cannot_reuse_key_with_changed_booking(booking, phone_api, booking_clock, monkeypatch):
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    assert CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"]).exit_code == 0
+    changed = BOOKING.copy()
+    changed[changed.index("--name") + 1] = "Different Person"
+    result = CliRunner().invoke(booking.main, [*changed, "--confirm-call", "--idempotency-key", "booking-001"])
+    assert result.exit_code == 1
+    assert len(phone_api.requests) == 1
+
+
+def test_unwritable_recovery_file_prevents_submission(booking, phone_api, monkeypatch):
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    original = booking.os.open
+    def denied(path, *args, **kwargs):
+        if ".voygr-calls" in str(path):
+            raise PermissionError("Cannot save recovery request")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(booking.os, "open", denied)
+    result = CliRunner().invoke(booking.main, [*BOOKING, "--confirm-call", "--idempotency-key", "booking-001"])
+    assert result.exit_code == 1
+    assert phone_api.requests == []
+
+
+@pytest.mark.parametrize("record", [None, {}, {"version": 1, "body": []}, "not-json"])
+def test_malformed_recovery_never_posts(booking, phone_api, monkeypatch, tmp_path, record):
+    monkeypatch.setenv("PLACECALL_API_KEY", "test-call-key")
+    receipt = tmp_path / "bad.json"
+    receipt.write_text(json.dumps(record) if record != "not-json" else "{broken", encoding="utf-8")
+    result = CliRunner().invoke(booking.main, ["--retry-request", str(receipt), "--confirm-call"])
+    assert result.exit_code == 1
+    assert phone_api.requests == []
