@@ -27,6 +27,9 @@ dev = [
 [tool.hatch.version]
 path = "src/voygr/__init__.py"
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [project.scripts]
 voygr = "voygr.cli:cli"
 
