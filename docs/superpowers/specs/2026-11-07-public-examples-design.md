@@ -54,6 +54,8 @@ join results by those IDs, preserving original IDs and row order even when resul
 arrive out of order. Refuse missing/duplicate/unknown result IDs or schema drift.
 Customer IDs remain output metadata; API validation sees generated row IDs, so
 the API's ID length limit does not constrain the preserved customer IDs.
+Translate validation error line numbers back to the original snapshot, including
+blank lines and multiline customer IDs or API fields.
 
 `examples/check_closed_stores/main.py` submits a validate job. Add columns
 `voygr_status`, `voygr_closure_reason`, `voygr_error`.

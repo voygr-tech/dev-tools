@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 import click
 
 from voygr import APIError, Client
-from voygr.csv_input import read_places
+from voygr.csv_input import CSVInputError, read_places
 
 
 def run_job(
@@ -49,11 +50,13 @@ def run_job(
             if set(normalized).intersection(reserved):
                 raise ValueError("CSV already has an output column; rename the voygr_ columns")
             originals = []
+            source_lines = []
             for row in reader:
                 if None in row or any(value is None for value in row.values()):
                     raise ValueError(f"CSV line {reader.line_num}: row width differs from the header")
                 if any(value.strip() for value in row.values()):
                     originals.append(row)
+                    source_lines.append(reader.line_num)
         # Customer IDs are output metadata. Only generated IDs need API validation.
         with tempfile.TemporaryDirectory(prefix="voygr-csv-") as scratch:
             snapshot_path = Path(scratch) / "input.csv"
@@ -63,7 +66,18 @@ def run_job(
                 writer.writeheader()
                 writer.writerows({**{h: row[h] for h in api_headers if h != "id"}, "id": f"row-{number}"}
                                  for number, row in enumerate(originals, 1))
-            places = read_places(snapshot_path)
+            try:
+                places = read_places(snapshot_path)
+            except CSVInputError as exc:
+                # The SDK's line belongs to the projection; locate that record in the source.
+                match = re.fullmatch(r"line ([0-9]+):(.*)", str(exc), flags=re.DOTALL)
+                if match:
+                    with snapshot_path.open(newline="", encoding="utf-8") as api_input:
+                        projected = csv.DictReader(api_input)
+                        for index, _ in enumerate(projected):
+                            if projected.line_num == int(match[1]):
+                                raise CSVInputError(f"line {source_lines[index]}:{match[2]}") from exc
+                raise
         for number, place in enumerate(places, 1):
             place["id"] = f"row-{number}"
             if attributes is not None:

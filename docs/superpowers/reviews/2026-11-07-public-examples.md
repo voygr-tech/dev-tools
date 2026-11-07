@@ -48,7 +48,23 @@ real calls were used. Local verification after the fixes: 587 tests pass under
 both pytest entry points. The bare pytest invocation used CI's coverage options
 on Python 3.12.3. Compilation, diff checks and the wheel build pass.
 
-## Original execution ledger
+## External review round 2
+
+Greptile reached 5/5 on `c39d02791320e0281d1cdb2c3fa65ccafb62245e`, with
+all CI checks passing. Its remaining non-blocking finding was valid: SDK errors
+named lines in the rewritten CSV instead of the source. Four regression cases
+failed before the fix, covering blank lines, multiline customer IDs, multiline
+API fields, and an invalid row whose customer ID spans lines. The helper now
+maps the failing projected record back to the original snapshot's physical line.
+Validation still finishes before HTTP or output reservation. The full bare
+pytest run with CI coverage flags passes 591 tests; compile/diff checks pass.
+
+This diagnostic change is functional, so the prior 5/5 does not cover the final
+head. Request one new exact-head review after pushing the verified batch, reusing
+an automatic review if one is pending. The active GitHub ruleset still requires
+one approving review from someone other than the author; no bypass was attempted.
+
+## Original execution ledger (before external review)
 
 ```text
 # SDD ledger — plan: docs/superpowers/plans/2026-11-07-public-examples.md

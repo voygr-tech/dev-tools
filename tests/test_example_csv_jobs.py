@@ -179,3 +179,18 @@ def test_id_only_row_is_invalid_before_submission(closed_command, example_api, e
     result = invoke(closed_command, example_files)
     assert result.exit_code != 0
     assert example_api.requests == []
+
+
+@pytest.mark.parametrize("text,line", [
+    ("name,address\n\n,1 Main St\n", 3),
+    ('name,id,latitude,longitude\nFirst,"customer\nwrapped",37,-122\nSecond,customer2,nan,-122\n', 4),
+    ('name,address,id\nFirst,"1 Main St\nUnit A",customer1\n\n,2 Main St,customer2\n', 5),
+    ('name,id\n,"customer\nwrapped"\n', 3),
+])
+def test_validation_error_names_original_source_line(closed_command, example_api, example_files, text, line):
+    example_files[0].write_text(text, encoding="utf-8")
+    result = invoke(closed_command, example_files)
+    assert result.exit_code == 1
+    assert f"Error: line {line}:" in result.stderr
+    assert example_api.requests == []
+    assert not example_files[1].exists()
