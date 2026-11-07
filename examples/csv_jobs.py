@@ -19,7 +19,7 @@ def run_job(
     fields: list[str],
     render: Callable[[dict], dict],
     *,
-    attributes: list[str] | None = None,
+    attributes: list[str | dict] | None = None,
     timeout: float = 3600,
 ) -> None:
     """Submit once, join by internal row ID, and create a new CSV after validation."""
