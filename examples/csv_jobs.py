@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,6 +24,9 @@ def run_job(
     timeout: float = 3600,
 ) -> None:
     """Submit once, join by internal row ID, and create a new CSV after validation."""
+    destination = None
+    saved = False
+    output_identity = None
     try:
         key = os.environ.get("VOYGR_API_KEY", "").strip()
         if not key:
@@ -33,8 +37,13 @@ def run_job(
             raise ValueError(f"Output already exists: {output_path}; choose a new path")
         if not output_path.parent.is_dir():
             raise ValueError(f"Output directory does not exist: {output_path.parent}")
-        places = read_places(input_path)
-        with input_path.open(newline="", encoding="utf-8-sig") as source:
+        # The SDK takes a path. Validate a private copy of the same bytes we preserve.
+        snapshot = input_path.read_bytes()
+        with tempfile.TemporaryDirectory(prefix="voygr-csv-") as scratch:
+            snapshot_path = Path(scratch) / "input.csv"
+            snapshot_path.write_bytes(snapshot)
+            places = read_places(snapshot_path)
+        with io.StringIO(snapshot.decode("utf-8-sig"), newline="") as source:
             reader = csv.DictReader(source, strict=True)
             headers = reader.fieldnames or []
             normalized = [h.strip().lower() for h in headers]
@@ -49,13 +58,14 @@ def run_job(
                     raise ValueError(f"CSV line {reader.line_num}: row width differs from the header")
                 if any(value.strip() for value in row.values()):
                     originals.append(row)
-        if len(originals) != len(places):
-            raise ValueError("CSV rows changed while reading; save the file and retry")
         for number, place in enumerate(places, 1):
             place["id"] = f"row-{number}"
             if attributes is not None:
                 place["attributes"] = attributes
 
+        # Reserve the exact path before spending credits, so permission errors are local.
+        destination = output_path.open("x", newline="", encoding="utf-8")
+        output_identity = os.fstat(destination.fileno())
         click.echo(f"Idempotency key: {idempotency_key} (reuse with identical input for retries)", err=True)
         with Client(api_key=key, retries=3) as client:
             submit = client.submit_validate_job if attributes is None else client.submit_enrich_job
@@ -98,11 +108,25 @@ def run_job(
                     "error_code": row.get("error_code"), "error": row.get("error"),
                 }, ensure_ascii=False)}
             writer.writerow({**original, **derived})
-        # Exclusive creation also protects against a file appearing during the job.
-        with output_path.open("x", newline="", encoding="utf-8") as destination:
-            destination.write(buffer.getvalue())
+        destination.write(buffer.getvalue())
+        destination.close()
+        if not os.path.samestat(output_identity, output_path.lstat()):
+            raise ValueError("Output path changed during the job; retrieve results using the batch ID")
+        saved = True
         click.echo(f"Wrote {len(originals)} rows to {output_path}", err=True)
         if failed:
             raise click.ClickException(f"{failed} row(s) failed; inspect voygr_error in the output")
     except (APIError, OSError, ValueError, csv.Error, TimeoutError) as exc:
         raise click.ClickException(str(exc)) from exc
+    finally:
+        if destination is not None:
+            try:
+                destination.close()
+            finally:
+                # Remove only our reserved file, never a path someone replaced mid-job.
+                if not saved:
+                    try:
+                        if os.path.samestat(output_identity, output_path.lstat()):
+                            output_path.unlink()
+                    except FileNotFoundError:
+                        pass

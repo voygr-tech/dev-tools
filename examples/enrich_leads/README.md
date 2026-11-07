@@ -65,7 +65,9 @@ voygr jobs results BATCH_ID
 ```
 
 Existing output files, duplicate/empty headers and conflicting output columns
-stop the command before submission. A completed job with failed rows writes the
+stop the command before submission. The script reserves an empty output file
+before spending credits and reads one snapshot of your input. Caught failures
+remove the reserved file. A completed job with failed rows writes the
 CSV and exits with code 1. Failed/cancelled jobs and malformed responses leave
 the output path untouched. `--timeout SECONDS` changes the wait limit; the job
 continues on the server if the local wait ends.

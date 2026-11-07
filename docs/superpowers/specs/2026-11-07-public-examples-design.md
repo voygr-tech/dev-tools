@@ -45,9 +45,10 @@ This document records engineering decisions; Yarik has not reviewed it.
 
 ### CSV examples
 
-Put shared CSV/job orchestration in `examples/csv_jobs.py`. Reuse
-`voygr.csv_input.read_places` for API input validation. Read original CSV records
-for output preservation, reject duplicate/empty headers, malformed rows and
+Put shared CSV/job orchestration in `examples/csv_jobs.py`. Capture one immutable
+input snapshot and validate a private temporary copy with
+`voygr.csv_input.read_places`. Read preserved CSV records from the same snapshot;
+reject duplicate/empty headers, malformed rows and
 pre-existing reserved output columns. Use internal unique row IDs in job payloads;
 join results by those IDs, preserving original IDs and row order even when results
 arrive out of order. Refuse missing/duplicate/unknown result IDs or schema drift.
@@ -55,16 +56,19 @@ arrive out of order. Refuse missing/duplicate/unknown result IDs or schema drift
 `examples/check_closed_stores/main.py` submits a validate job. Add columns
 `voygr_status`, `voygr_closure_reason`, `voygr_error`.
 `examples/enrich_leads/main.py` submits an enrich job requesting standard phone,
-email, website and the documented `owners` research field. Preserve attribute
+email, website and the documented `owners` research field with direct phone/email
+included. Preserve attribute
 objects as JSON cells in `voygr_phone`, `voygr_email`, `voygr_website`,
 `voygr_owners` so confidence, sources and missing values survive.
 
 Both commands accept INPUT OUTPUT `--idempotency-key KEY`, require
 `VOYGR_API_KEY`, wait with a finite timeout, and print the batch ID. Use the same
 key and identical input to retry an interrupted submission. Reject an existing
-output path rather than overwriting it. Serialize results completely before
-creating output with exclusive creation. A terminal failed/cancelled job leaves
-output untouched and reports the batch ID; SDK job commands retrieve partial rows.
+output path rather than overwriting it. Reserve the exact output path with
+exclusive creation before submitting billable work. Serialize results before
+writing the reserved file. Remove only the file this invocation reserved on
+failure; never remove a replacement file. A terminal failed/cancelled job removes
+the reservation and reports the batch ID; SDK job commands retrieve partial rows.
 For completed jobs with failed rows, write all rows with errors and exit nonzero.
 
 ### Table booking

@@ -120,3 +120,43 @@ def test_sdk_error_is_clear_and_has_recovery_key(closed_command, example_api, ex
     assert "QUOTA_EXCEEDED" in result.stderr
     assert "closed-example" in result.stderr
     assert not example_files[1].exists()
+
+
+def test_unwritable_output_fails_before_submission(closed_command, example_api, example_files, monkeypatch):
+    from pathlib import Path
+    original_open = Path.open
+    def denied(path, *args, **kwargs):
+        if path == example_files[1]:
+            raise PermissionError("Output cannot be created")
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", denied)
+    result = invoke(closed_command, example_files)
+    assert result.exit_code == 1
+    assert example_api.requests == []
+    assert not example_files[1].exists()
+
+
+def test_one_snapshot_keeps_results_with_the_queried_business(closed_command, example_api, example_files, monkeypatch):
+    import examples.csv_jobs as jobs
+    original_read = jobs.read_places
+    def edited_between_reads(path):
+        places = original_read(path)
+        text = example_files[0].read_text(encoding="utf-8")
+        example_files[0].write_text(text.replace("First,", "Different Store,"), encoding="utf-8")
+        return places
+    monkeypatch.setattr(jobs, "read_places", edited_between_reads)
+    result = invoke(closed_command, example_files)
+    assert result.exit_code == 0, result.output
+    submitted = json.loads(example_api.requests[0].content)["pois"]
+    with example_files[1].open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert submitted[0]["poi_name"] == "First"
+    assert rows[0]["name"] == "First"
+    assert rows[0]["voygr_status"] == "open"
+
+
+def test_failed_job_releases_reserved_output(closed_command, example_api, example_files):
+    example_api.status = "failed"
+    result = invoke(closed_command, example_files)
+    assert result.exit_code == 1
+    assert not example_files[1].exists()

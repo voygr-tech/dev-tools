@@ -60,9 +60,11 @@ python -m examples.book_table.main --call-id CALL_ID
 
 That command sends only a GET. It prints the structured result and transcript
 fields returned by the API. If `status` is `completed` but `result` is `null`,
-read the same call again after a few seconds. A non-null `result` is final;
-use the outcome summary and transcript to determine what the restaurant agreed
-to. For a complete transcript, check that `transcript_status` is `final`.
+read the same call again after a few seconds. Use the outcome summary and
+transcript to determine whether the restaurant confirmed your exact booking.
+The [calling guide](https://api.voygr.tech/docs/guides/place-a-call/) explains
+the result codes. For a complete transcript, check that `transcript_status`
+is `final`, or that `recording_declined` is true and no transcript will arrive.
 
 ## Recover an uncertain submission
 

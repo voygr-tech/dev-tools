@@ -46,7 +46,10 @@ The input needs a `name` header. The SDK also accepts `address`, `country`,
 `latitude` and `longitude`; give a full address to identify a particular branch.
 Header names ignore case and surrounding spaces. A job takes up to 10,000 rows.
 The script checks the whole file before submission and refuses existing output
-files or columns that would collide with its output.
+files or columns that would collide with its output. It reserves an empty output
+file before submission to check write access, then fills it after validating the
+results. Caught failures remove that reservation. It reads one input snapshot so
+edits during the job do not attach results to another business.
 
 ## Errors and recovery
 
